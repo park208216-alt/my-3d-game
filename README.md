@@ -24,8 +24,9 @@ git push -u origin main
    - Build Command: `npm install`
    - Start Command: `npm run server`
 4. Add environment variable:
-   - `CLIENT_ORIGIN=*` (quick start)
-   - Later you can set this to your Vercel domain for tighter security
+   - `CLIENT_ORIGIN=https://my-3d-game-seven.vercel.app`
+   - If you also use preview domains, add comma-separated values:
+     - `CLIENT_ORIGIN=https://my-3d-game-seven.vercel.app,https://my-3d-game-git-main-park208216-4393s-projects.vercel.app`
 5. Deploy and copy service URL, e.g.
    - `https://my-3d-game-socket.onrender.com`
 
@@ -43,7 +44,8 @@ Health check endpoint:
 ## 4) Verify multiplayer
 
 1. Open the Vercel URL on two different devices/networks
-2. Click into each game view to lock mouse
+2. Enter the same room code and nickname, then join
+3. Click into each game view to lock mouse
 3. Move with WASD and confirm both clients see each other
 
 ## 5) Local development (unchanged)
