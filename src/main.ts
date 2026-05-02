@@ -67,6 +67,55 @@ roomStatus.style.fontSize = '12px';
 roomStatus.style.zIndex = '20';
 document.body.appendChild(roomStatus);
 
+const combatStatus = document.createElement('div');
+combatStatus.textContent = 'HP: 100 | K:0 D:0';
+combatStatus.style.position = 'fixed';
+combatStatus.style.top = '116px';
+combatStatus.style.left = '50%';
+combatStatus.style.transform = 'translateX(-50%)';
+combatStatus.style.padding = '6px 10px';
+combatStatus.style.background = 'rgba(0, 0, 0, 0.35)';
+combatStatus.style.color = '#ffd8b0';
+combatStatus.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+combatStatus.style.borderRadius = '999px';
+combatStatus.style.fontFamily = 'system-ui, sans-serif';
+combatStatus.style.fontSize = '12px';
+combatStatus.style.zIndex = '20';
+document.body.appendChild(combatStatus);
+
+const combatFeed = document.createElement('div');
+combatFeed.textContent = '';
+combatFeed.style.position = 'fixed';
+combatFeed.style.bottom = '20px';
+combatFeed.style.left = '50%';
+combatFeed.style.transform = 'translateX(-50%)';
+combatFeed.style.padding = '8px 12px';
+combatFeed.style.background = 'rgba(0, 0, 0, 0.45)';
+combatFeed.style.color = '#ffe9d2';
+combatFeed.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+combatFeed.style.borderRadius = '10px';
+combatFeed.style.fontFamily = 'system-ui, sans-serif';
+combatFeed.style.fontSize = '13px';
+combatFeed.style.opacity = '0';
+combatFeed.style.transition = 'opacity 0.18s ease';
+combatFeed.style.zIndex = '20';
+document.body.appendChild(combatFeed);
+
+const crosshair = document.createElement('div');
+crosshair.textContent = '+';
+crosshair.style.position = 'fixed';
+crosshair.style.left = '50%';
+crosshair.style.top = '50%';
+crosshair.style.transform = 'translate(-50%, -50%)';
+crosshair.style.color = '#ffffff';
+crosshair.style.fontFamily = 'monospace';
+crosshair.style.fontSize = '24px';
+crosshair.style.textShadow = '0 0 6px rgba(255,255,255,0.7)';
+crosshair.style.pointerEvents = 'none';
+crosshair.style.opacity = '0';
+crosshair.style.zIndex = '25';
+document.body.appendChild(crosshair);
+
 const setupOverlay = document.createElement('div');
 setupOverlay.style.position = 'fixed';
 setupOverlay.style.inset = '0';
@@ -185,6 +234,9 @@ let localNickname = nicknameInput.value;
 let currentRoomCode = '';
 let playerCount = 0;
 let hasJoinedRoom = false;
+let localHp = 100;
+let localKills = 0;
+let localDeaths = 0;
 
 const keys = new Set<string>();
 window.addEventListener('keydown', (event) => keys.add(event.code));
@@ -212,6 +264,7 @@ type RemotePlayer = {
 };
 const remotePlayers = new Map<string, RemotePlayer>();
 let sendAccumulator = 0;
+let shootCooldown = 0;
 
 const socketUrl =
   (import.meta.env.VITE_SOCKET_URL as string | undefined) ??
@@ -238,6 +291,10 @@ type NetPlayer = {
   roomCode: string;
   position: { x: number; y: number; z: number };
   yaw: number;
+  hp: number;
+  kills: number;
+  deaths: number;
+  isAlive: boolean;
 };
 
 socket.on('bootstrap', (payload: { id: string; roomCode: string; players: NetPlayer[] }) => {
@@ -247,6 +304,7 @@ socket.on('bootstrap', (payload: { id: string; roomCode: string; players: NetPla
   setupOverlay.style.display = 'none';
   netStatus.textContent = `Connected as ${localNickname}`;
   syncRemotePlayers(payload.players);
+  syncLocalCombatStats(payload.players);
   setRoomStatus(currentRoomCode, payload.players.length);
 });
 
@@ -268,6 +326,7 @@ socket.on('playerLeft', (id: string) => {
 
 socket.on('worldState', (players: NetPlayer[]) => {
   syncRemotePlayers(players);
+  syncLocalCombatStats(players);
   setRoomStatus(currentRoomCode, players.length);
 });
 
@@ -281,6 +340,30 @@ socket.on('joinError', (message: string) => {
   joinError.textContent = message;
 });
 
+socket.on('damageTaken', (payload: { by: string; hp: number }) => {
+  localHp = payload.hp;
+  updateCombatStatus();
+  flashCombatFeed(`Hit by ${payload.by} (${payload.hp} HP left)`);
+});
+
+socket.on(
+  'playerDied',
+  (payload: { killerId: string; killerName: string; victimId: string; victimName: string }) => {
+    if (!payload) return;
+    flashCombatFeed(`${payload.killerName} eliminated ${payload.victimName}`);
+  }
+);
+
+socket.on('playerRespawn', (payload: { position: { x: number; y: number; z: number } }) => {
+  if (!payload?.position) return;
+  playerPosition.set(payload.position.x, payload.position.y, payload.position.z);
+  velocityY = 0;
+  canJump = true;
+  localHp = 100;
+  updateCombatStatus();
+  flashCombatFeed('Respawned');
+});
+
 renderer.domElement.addEventListener('click', () => {
   if (!hasJoinedRoom) return;
   renderer.domElement.requestPointerLock();
@@ -289,6 +372,7 @@ renderer.domElement.addEventListener('click', () => {
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.domElement;
   info.style.display = locked ? 'none' : 'block';
+  crosshair.style.opacity = locked ? '0.9' : '0';
 });
 
 document.addEventListener('mousemove', (event) => {
@@ -299,9 +383,23 @@ document.addEventListener('mousemove', (event) => {
   pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
 });
 
+document.addEventListener('mousedown', (event) => {
+  if (event.button !== 0) return;
+  if (!hasJoinedRoom || shootCooldown > 0) return;
+  if (document.pointerLockElement !== renderer.domElement) return;
+
+  shootCooldown = 0.18;
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  socket.emit('shoot', {
+    origin: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    direction: { x: direction.x, y: direction.y, z: direction.z },
+  });
+});
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.033);
+  shootCooldown = Math.max(0, shootCooldown - dt);
 
   const moveForward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
   const moveRight = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
@@ -351,6 +449,10 @@ function animate() {
   }
 
   for (const remote of remotePlayers.values()) {
+    if (!remote.mesh.visible) {
+      remote.labelSprite.visible = false;
+      continue;
+    }
     remote.mesh.position.lerp(remote.targetPosition, 1 - Math.exp(-14 * dt));
     remote.mesh.rotation.y += (remote.targetYaw - remote.mesh.rotation.y) * (1 - Math.exp(-14 * dt));
     remote.labelSprite.position.set(
@@ -389,6 +491,10 @@ joinButton.addEventListener('click', () => {
     return;
   }
   localNickname = nickname;
+  localHp = 100;
+  localKills = 0;
+  localDeaths = 0;
+  updateCombatStatus();
   if (socket.connected) {
     socket.emit('joinRoom', { nickname, roomCode });
   } else {
@@ -470,6 +576,10 @@ function syncRemotePlayers(players: NetPlayer[]) {
       remote.labelText = player.nickname;
     }
 
+    remote.mesh.visible = player.isAlive;
+    remote.labelSprite.visible = player.isAlive;
+    if (!player.isAlive) continue;
+
     remote.targetPosition.set(player.position.x, Math.max(1, player.position.y - 0.7), player.position.z);
     remote.targetYaw = player.yaw;
   }
@@ -492,6 +602,31 @@ function setRoomStatus(roomCode: string, count: number) {
   if (!roomCode) return;
   playerCount = count;
   roomStatus.textContent = `Room: ${roomCode} | Players: ${playerCount}`;
+}
+
+function syncLocalCombatStats(players: NetPlayer[]) {
+  const me = players.find((player) => player.id === localPlayerId);
+  if (!me) return;
+  localHp = me.hp;
+  localKills = me.kills;
+  localDeaths = me.deaths;
+  updateCombatStatus();
+}
+
+function updateCombatStatus() {
+  combatStatus.textContent = `HP: ${Math.max(0, Math.floor(localHp))} | K:${localKills} D:${localDeaths}`;
+}
+
+let combatFeedTimer: number | null = null;
+function flashCombatFeed(message: string) {
+  combatFeed.textContent = message;
+  combatFeed.style.opacity = '1';
+  if (combatFeedTimer !== null) {
+    window.clearTimeout(combatFeedTimer);
+  }
+  combatFeedTimer = window.setTimeout(() => {
+    combatFeed.style.opacity = '0';
+  }, 1400);
 }
 
 function createNameTag(name: string) {

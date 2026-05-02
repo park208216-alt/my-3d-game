@@ -4,6 +4,12 @@ import { Server } from 'socket.io';
 const PORT = Number(process.env.PORT) || 3001;
 const TICK_MS = 50;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || '';
+const MAX_HP = 100;
+const SHOT_DAMAGE = 34;
+const SHOT_COOLDOWN_MS = 180;
+const SHOT_RANGE = 60;
+const HIT_RADIUS = 0.75;
+const RESPAWN_DELAY_MS = 1500;
 const ALLOWED_ORIGINS = CLIENT_ORIGIN.split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -66,6 +72,11 @@ io.on('connection', (socket) => {
       roomCode,
       position: { x: spawn.x, y: 1.7, z: spawn.z },
       yaw: Math.PI,
+      hp: MAX_HP,
+      kills: 0,
+      deaths: 0,
+      isAlive: true,
+      lastShotAt: 0,
     };
     roomPlayers.set(socket.id, player);
 
@@ -85,6 +96,7 @@ io.on('connection', (socket) => {
     if (!roomPlayers) return;
     const player = roomPlayers.get(socket.id);
     if (!player) return;
+    if (!player.isAlive) return;
 
     if (payload?.position) {
       player.position.x = Number(payload.position.x) || 0;
@@ -95,6 +107,85 @@ io.on('connection', (socket) => {
     if (typeof payload?.yaw === 'number') {
       player.yaw = payload.yaw;
     }
+  });
+
+  socket.on('shoot', (payload) => {
+    const roomCode = socketMeta.get(socket.id)?.roomCode;
+    if (!roomCode) return;
+    const roomPlayers = rooms.get(roomCode);
+    if (!roomPlayers) return;
+    const shooter = roomPlayers.get(socket.id);
+    if (!shooter || !shooter.isAlive) return;
+
+    const now = Date.now();
+    if (now - shooter.lastShotAt < SHOT_COOLDOWN_MS) return;
+    shooter.lastShotAt = now;
+
+    const origin = sanitizeVector(payload?.origin, shooter.position);
+    const direction = sanitizeDirection(payload?.direction);
+    if (!direction) return;
+
+    let closestTarget = null;
+    let closestT = SHOT_RANGE + 1;
+
+    for (const target of roomPlayers.values()) {
+      if (target.id === shooter.id || !target.isAlive) continue;
+      const center = { x: target.position.x, y: target.position.y - 0.2, z: target.position.z };
+      const toTarget = {
+        x: center.x - origin.x,
+        y: center.y - origin.y,
+        z: center.z - origin.z,
+      };
+
+      const t = toTarget.x * direction.x + toTarget.y * direction.y + toTarget.z * direction.z;
+      if (t < 0 || t > SHOT_RANGE || t >= closestT) continue;
+
+      const closest = {
+        x: origin.x + direction.x * t,
+        y: origin.y + direction.y * t,
+        z: origin.z + direction.z * t,
+      };
+      const dx = center.x - closest.x;
+      const dy = center.y - closest.y;
+      const dz = center.z - closest.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq <= HIT_RADIUS * HIT_RADIUS) {
+        closestTarget = target;
+        closestT = t;
+      }
+    }
+
+    if (!closestTarget) return;
+
+    closestTarget.hp = Math.max(0, closestTarget.hp - SHOT_DAMAGE);
+    io.to(closestTarget.id).emit('damageTaken', {
+      by: shooter.nickname,
+      hp: closestTarget.hp,
+    });
+
+    if (closestTarget.hp > 0) return;
+
+    closestTarget.isAlive = false;
+    closestTarget.deaths += 1;
+    shooter.kills += 1;
+    io.to(roomCode).emit('playerDied', {
+      killerId: shooter.id,
+      killerName: shooter.nickname,
+      victimId: closestTarget.id,
+      victimName: closestTarget.nickname,
+    });
+
+    setTimeout(() => {
+      const playersInRoom = rooms.get(roomCode);
+      if (!playersInRoom) return;
+      const playerToRespawn = playersInRoom.get(closestTarget.id);
+      if (!playerToRespawn) return;
+      const spawn = randomSpawn();
+      playerToRespawn.position = { x: spawn.x, y: 1.7, z: spawn.z };
+      playerToRespawn.hp = MAX_HP;
+      playerToRespawn.isAlive = true;
+      io.to(playerToRespawn.id).emit('playerRespawn', { position: playerToRespawn.position });
+    }, RESPAWN_DELAY_MS);
   });
 
   socket.on('disconnect', () => {
@@ -163,4 +254,22 @@ function emitRoomInfo(roomCode) {
   const roomPlayers = rooms.get(roomCode);
   const count = roomPlayers?.size ?? 0;
   io.to(roomCode).emit('roomInfo', { roomCode, count });
+}
+
+function sanitizeVector(raw, fallback) {
+  const x = Number(raw?.x);
+  const y = Number(raw?.y);
+  const z = Number(raw?.z);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return fallback;
+  return { x, y, z };
+}
+
+function sanitizeDirection(raw) {
+  const x = Number(raw?.x);
+  const y = Number(raw?.y);
+  const z = Number(raw?.z);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+  const len = Math.hypot(x, y, z);
+  if (len < 1e-5) return null;
+  return { x: x / len, y: y / len, z: z / len };
 }
