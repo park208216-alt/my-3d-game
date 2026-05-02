@@ -39,6 +39,19 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const targetRoomPlayers = rooms.get(roomCode);
+    if (targetRoomPlayers) {
+      const duplicate = Array.from(targetRoomPlayers.values()).some(
+        (existing) =>
+          existing.id !== socket.id &&
+          existing.nickname.toLowerCase() === nickname.toLowerCase()
+      );
+      if (duplicate) {
+        socket.emit('joinError', 'Nickname already used in this room');
+        return;
+      }
+    }
+
     leaveCurrentRoom(socket);
     socket.join(roomCode);
     socketMeta.set(socket.id, { roomCode });

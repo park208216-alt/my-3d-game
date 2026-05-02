@@ -108,6 +108,22 @@ roomCodeInput.style.marginTop = '8px';
 applyInputStyle(roomCodeInput);
 setupPanel.appendChild(roomCodeInput);
 
+const roomCodeActions = document.createElement('div');
+roomCodeActions.style.display = 'flex';
+roomCodeActions.style.gap = '8px';
+roomCodeActions.style.marginTop = '8px';
+setupPanel.appendChild(roomCodeActions);
+
+const randomRoomButton = document.createElement('button');
+randomRoomButton.textContent = 'Random Code';
+applyMiniButtonStyle(randomRoomButton);
+roomCodeActions.appendChild(randomRoomButton);
+
+const copyRoomButton = document.createElement('button');
+copyRoomButton.textContent = 'Copy Code';
+applyMiniButtonStyle(copyRoomButton);
+roomCodeActions.appendChild(copyRoomButton);
+
 const joinHint = document.createElement('div');
 joinHint.textContent = 'Share same room code to play together.';
 joinHint.style.fontSize = '12px';
@@ -261,6 +277,7 @@ socket.on('roomInfo', (payload: { roomCode: string; count: number }) => {
 });
 
 socket.on('joinError', (message: string) => {
+  joinError.style.color = '#ff9b9b';
   joinError.textContent = message;
 });
 
@@ -358,9 +375,11 @@ window.addEventListener('resize', () => {
 });
 
 joinButton.addEventListener('click', () => {
+  joinError.style.color = '#ff9b9b';
   joinError.textContent = '';
   const nickname = nicknameInput.value.trim().slice(0, 16);
-  const roomCode = roomCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const roomCode = normalizeRoomCode(roomCodeInput.value);
+  roomCodeInput.value = roomCode;
   if (!nickname) {
     joinError.textContent = 'Please enter a nickname.';
     return;
@@ -377,6 +396,29 @@ joinButton.addEventListener('click', () => {
     socket.once('connect', () => {
       socket.emit('joinRoom', { nickname, roomCode });
     });
+  }
+});
+
+randomRoomButton.addEventListener('click', () => {
+  roomCodeInput.value = makeRoomCode();
+  joinError.textContent = '';
+});
+
+copyRoomButton.addEventListener('click', async () => {
+  const roomCode = normalizeRoomCode(roomCodeInput.value);
+  roomCodeInput.value = roomCode;
+  if (!roomCode) {
+    joinError.textContent = 'Enter room code first.';
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(roomCode);
+    joinError.style.color = '#9dffbc';
+    joinError.textContent = 'Room code copied.';
+  } catch {
+    joinError.style.color = '#ff9b9b';
+    joinError.textContent = 'Clipboard blocked. Copy manually.';
   }
 });
 
@@ -503,6 +545,30 @@ function applyInputStyle(input: HTMLInputElement) {
   input.style.background = 'rgba(255, 255, 255, 0.05)';
   input.style.color = '#e8eefc';
   input.style.outline = 'none';
+}
+
+function applyMiniButtonStyle(button: HTMLButtonElement) {
+  button.style.flex = '1';
+  button.style.padding = '8px 10px';
+  button.style.borderRadius = '8px';
+  button.style.border = '1px solid rgba(255, 255, 255, 0.22)';
+  button.style.background = 'rgba(255, 255, 255, 0.08)';
+  button.style.color = '#e8eefc';
+  button.style.fontWeight = '600';
+  button.style.cursor = 'pointer';
+}
+
+function normalizeRoomCode(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+}
+
+function makeRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i += 1) {
+    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return code;
 }
 
 function createCheckerTexture() {
