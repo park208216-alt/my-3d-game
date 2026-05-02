@@ -17,7 +17,17 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
 document.body.style.margin = '0';
 document.body.style.overflow = 'hidden';
+document.body.style.touchAction = 'none';
+document.body.style.overscrollBehavior = 'none';
 document.body.appendChild(renderer.domElement);
+
+document.addEventListener(
+  'gesturestart',
+  (event) => {
+    event.preventDefault();
+  },
+  { passive: false }
+);
 
 const info = document.createElement('div');
 info.textContent = 'Click to play (WASD move, Shift run, Space jump, Mouse look)';
