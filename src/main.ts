@@ -116,6 +116,79 @@ crosshair.style.opacity = '0';
 crosshair.style.zIndex = '25';
 document.body.appendChild(crosshair);
 
+const modeSwitch = document.createElement('div');
+modeSwitch.style.position = 'fixed';
+modeSwitch.style.top = '16px';
+modeSwitch.style.right = '16px';
+modeSwitch.style.display = 'flex';
+modeSwitch.style.gap = '6px';
+modeSwitch.style.zIndex = '26';
+document.body.appendChild(modeSwitch);
+
+const pcModeButton = document.createElement('button');
+pcModeButton.textContent = 'PC';
+applyMiniButtonStyle(pcModeButton);
+pcModeButton.style.padding = '6px 10px';
+modeSwitch.appendChild(pcModeButton);
+
+const mobileModeButton = document.createElement('button');
+mobileModeButton.textContent = 'Mobile';
+applyMiniButtonStyle(mobileModeButton);
+mobileModeButton.style.padding = '6px 10px';
+modeSwitch.appendChild(mobileModeButton);
+
+const mobileHud = document.createElement('div');
+mobileHud.style.position = 'fixed';
+mobileHud.style.inset = '0';
+mobileHud.style.zIndex = '24';
+mobileHud.style.pointerEvents = 'none';
+mobileHud.style.display = 'none';
+document.body.appendChild(mobileHud);
+
+const joystickBase = document.createElement('div');
+joystickBase.style.position = 'absolute';
+joystickBase.style.left = '20px';
+joystickBase.style.bottom = '20px';
+joystickBase.style.width = '120px';
+joystickBase.style.height = '120px';
+joystickBase.style.borderRadius = '999px';
+joystickBase.style.background = 'rgba(255,255,255,0.08)';
+joystickBase.style.border = '2px solid rgba(255,255,255,0.2)';
+joystickBase.style.pointerEvents = 'auto';
+joystickBase.style.touchAction = 'none';
+mobileHud.appendChild(joystickBase);
+
+const joystickKnob = document.createElement('div');
+joystickKnob.style.position = 'absolute';
+joystickKnob.style.left = '50%';
+joystickKnob.style.top = '50%';
+joystickKnob.style.width = '50px';
+joystickKnob.style.height = '50px';
+joystickKnob.style.borderRadius = '999px';
+joystickKnob.style.background = 'rgba(148,214,255,0.85)';
+joystickKnob.style.transform = 'translate(-50%, -50%)';
+joystickKnob.style.pointerEvents = 'none';
+joystickBase.appendChild(joystickKnob);
+
+const mobileButtons = document.createElement('div');
+mobileButtons.style.position = 'absolute';
+mobileButtons.style.right = '20px';
+mobileButtons.style.bottom = '20px';
+mobileButtons.style.display = 'grid';
+mobileButtons.style.gridTemplateColumns = 'repeat(2, 76px)';
+mobileButtons.style.gridAutoRows = '56px';
+mobileButtons.style.gap = '10px';
+mobileButtons.style.pointerEvents = 'auto';
+mobileHud.appendChild(mobileButtons);
+
+const mobileRunButton = createActionButton('RUN');
+const mobileJumpButton = createActionButton('JUMP');
+const mobileShootButton = createActionButton('FIRE');
+mobileShootButton.style.gridColumn = 'span 2';
+mobileButtons.appendChild(mobileRunButton);
+mobileButtons.appendChild(mobileJumpButton);
+mobileButtons.appendChild(mobileShootButton);
+
 const setupOverlay = document.createElement('div');
 setupOverlay.style.position = 'fixed';
 setupOverlay.style.inset = '0';
@@ -237,6 +310,17 @@ let hasJoinedRoom = false;
 let localHp = 100;
 let localKills = 0;
 let localDeaths = 0;
+type ControlMode = 'pc' | 'mobile';
+const prefersTouchInput = window.matchMedia('(pointer: coarse)').matches;
+let controlMode: ControlMode = prefersTouchInput ? 'mobile' : 'pc';
+let mobileMoveX = 0;
+let mobileMoveY = 0;
+let mobileRunPressed = false;
+let mobileJumpQueued = false;
+let joystickPointerId: number | null = null;
+let mobileLookPointerId: number | null = null;
+let mobileLookLastX = 0;
+let mobileLookLastY = 0;
 
 const keys = new Set<string>();
 window.addEventListener('keydown', (event) => keys.add(event.code));
@@ -364,18 +448,25 @@ socket.on('playerRespawn', (payload: { position: { x: number; y: number; z: numb
   flashCombatFeed('Respawned');
 });
 
+pcModeButton.addEventListener('click', () => setControlMode('pc'));
+mobileModeButton.addEventListener('click', () => setControlMode('mobile'));
+setControlMode(controlMode);
+
 renderer.domElement.addEventListener('click', () => {
+  if (controlMode !== 'pc') return;
   if (!hasJoinedRoom) return;
   renderer.domElement.requestPointerLock();
 });
 
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.domElement;
-  info.style.display = locked ? 'none' : 'block';
-  crosshair.style.opacity = locked ? '0.9' : '0';
+  const showPcHint = controlMode === 'pc' && !locked;
+  info.style.display = showPcHint ? 'block' : 'none';
+  crosshair.style.opacity = controlMode === 'mobile' || locked ? '0.9' : '0';
 });
 
 document.addEventListener('mousemove', (event) => {
+  if (controlMode !== 'pc') return;
   if (document.pointerLockElement !== renderer.domElement) return;
 
   yaw -= event.movementX * lookSensitivity;
@@ -384,16 +475,86 @@ document.addEventListener('mousemove', (event) => {
 });
 
 document.addEventListener('mousedown', (event) => {
+  if (controlMode !== 'pc') return;
   if (event.button !== 0) return;
-  if (!hasJoinedRoom || shootCooldown > 0) return;
+  if (!hasJoinedRoom) return;
   if (document.pointerLockElement !== renderer.domElement) return;
+  attemptShoot();
+});
 
-  shootCooldown = 0.18;
-  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
-  socket.emit('shoot', {
-    origin: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-    direction: { x: direction.x, y: direction.y, z: direction.z },
-  });
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  if (controlMode !== 'mobile') return;
+  if (!hasJoinedRoom) return;
+  if (event.clientX < window.innerWidth * 0.38) return;
+  mobileLookPointerId = event.pointerId;
+  mobileLookLastX = event.clientX;
+  mobileLookLastY = event.clientY;
+});
+
+renderer.domElement.addEventListener('pointermove', (event) => {
+  if (controlMode !== 'mobile') return;
+  if (mobileLookPointerId !== event.pointerId) return;
+  const dx = event.clientX - mobileLookLastX;
+  const dy = event.clientY - mobileLookLastY;
+  mobileLookLastX = event.clientX;
+  mobileLookLastY = event.clientY;
+
+  yaw -= dx * lookSensitivity;
+  pitch -= dy * lookSensitivity;
+  pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
+});
+
+renderer.domElement.addEventListener('pointerup', (event) => {
+  if (mobileLookPointerId === event.pointerId) mobileLookPointerId = null;
+});
+renderer.domElement.addEventListener('pointercancel', (event) => {
+  if (mobileLookPointerId === event.pointerId) mobileLookPointerId = null;
+});
+
+joystickBase.addEventListener('pointerdown', (event) => {
+  if (controlMode !== 'mobile') return;
+  joystickPointerId = event.pointerId;
+  joystickBase.setPointerCapture(event.pointerId);
+  updateMobileJoystick(event.clientX, event.clientY);
+});
+
+joystickBase.addEventListener('pointermove', (event) => {
+  if (controlMode !== 'mobile') return;
+  if (joystickPointerId !== event.pointerId) return;
+  updateMobileJoystick(event.clientX, event.clientY);
+});
+
+const releaseJoystick = (event: PointerEvent) => {
+  if (joystickPointerId !== event.pointerId) return;
+  joystickPointerId = null;
+  mobileMoveX = 0;
+  mobileMoveY = 0;
+  joystickKnob.style.transform = 'translate(-50%, -50%)';
+};
+joystickBase.addEventListener('pointerup', releaseJoystick);
+joystickBase.addEventListener('pointercancel', releaseJoystick);
+
+mobileRunButton.addEventListener('pointerdown', () => {
+  if (controlMode !== 'mobile') return;
+  mobileRunPressed = true;
+  mobileRunButton.style.opacity = '1';
+});
+const releaseRun = () => {
+  mobileRunPressed = false;
+  mobileRunButton.style.opacity = '0.85';
+};
+mobileRunButton.addEventListener('pointerup', releaseRun);
+mobileRunButton.addEventListener('pointercancel', releaseRun);
+mobileRunButton.addEventListener('pointerleave', releaseRun);
+
+mobileJumpButton.addEventListener('pointerdown', () => {
+  if (controlMode !== 'mobile') return;
+  mobileJumpQueued = true;
+});
+
+mobileShootButton.addEventListener('pointerdown', () => {
+  if (controlMode !== 'mobile') return;
+  attemptShoot();
 });
 
 function animate() {
@@ -401,9 +562,12 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.033);
   shootCooldown = Math.max(0, shootCooldown - dt);
 
-  const moveForward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-  const moveRight = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-  const isRunning = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  const keyboardForward = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+  const keyboardRight = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  const moveForward = controlMode === 'mobile' ? mobileMoveY : keyboardForward;
+  const moveRight = controlMode === 'mobile' ? mobileMoveX : keyboardRight;
+  const isRunning =
+    controlMode === 'mobile' ? mobileRunPressed : keys.has('ShiftLeft') || keys.has('ShiftRight');
   const speed = isRunning ? runSpeed : walkSpeed;
 
   const inputVector = new THREE.Vector2(moveRight, moveForward);
@@ -415,11 +579,12 @@ function animate() {
   playerPosition.addScaledVector(forward, inputVector.y * speed * dt);
   playerPosition.addScaledVector(right, inputVector.x * speed * dt);
 
-  const jumpPressed = keys.has('Space');
+  const jumpPressed = controlMode === 'mobile' ? mobileJumpQueued : keys.has('Space');
   if (jumpPressed && canJump) {
     velocityY = jumpSpeed;
     canJump = false;
   }
+  mobileJumpQueued = false;
 
   velocityY -= gravity * dt;
   playerPosition.y += velocityY * dt;
@@ -693,6 +858,21 @@ function applyMiniButtonStyle(button: HTMLButtonElement) {
   button.style.cursor = 'pointer';
 }
 
+function createActionButton(label: string) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.style.padding = '8px 10px';
+  button.style.borderRadius = '999px';
+  button.style.border = '1px solid rgba(255, 255, 255, 0.22)';
+  button.style.background = 'rgba(12, 18, 34, 0.72)';
+  button.style.color = '#e8eefc';
+  button.style.fontWeight = '700';
+  button.style.cursor = 'pointer';
+  button.style.opacity = '0.85';
+  button.style.touchAction = 'none';
+  return button;
+}
+
 function normalizeRoomCode(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
 }
@@ -704,6 +884,53 @@ function makeRoomCode() {
     code += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return code;
+}
+
+function setControlMode(nextMode: ControlMode) {
+  controlMode = nextMode;
+  const isMobile = nextMode === 'mobile';
+  mobileHud.style.display = isMobile ? 'block' : 'none';
+  info.textContent = isMobile
+    ? 'Mobile mode (left joystick move, right side drag look)'
+    : 'Click to play (WASD move, Shift run, Space jump, Mouse look)';
+  info.style.display = isMobile ? 'block' : document.pointerLockElement === renderer.domElement ? 'none' : 'block';
+  crosshair.style.opacity = isMobile || document.pointerLockElement === renderer.domElement ? '0.9' : '0';
+
+  if (isMobile && document.pointerLockElement === renderer.domElement) {
+    document.exitPointerLock();
+  }
+
+  pcModeButton.style.background = nextMode === 'pc' ? '#41c1ff' : 'rgba(255, 255, 255, 0.08)';
+  pcModeButton.style.color = nextMode === 'pc' ? '#031523' : '#e8eefc';
+  mobileModeButton.style.background = nextMode === 'mobile' ? '#41c1ff' : 'rgba(255, 255, 255, 0.08)';
+  mobileModeButton.style.color = nextMode === 'mobile' ? '#031523' : '#e8eefc';
+}
+
+function updateMobileJoystick(clientX: number, clientY: number) {
+  const rect = joystickBase.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const dx = clientX - centerX;
+  const dy = clientY - centerY;
+  const radius = rect.width * 0.36;
+  const distance = Math.hypot(dx, dy);
+  const clamp = distance > radius ? radius / distance : 1;
+  const x = (dx * clamp) / radius;
+  const y = (dy * clamp) / radius;
+
+  mobileMoveX = x;
+  mobileMoveY = -y;
+  joystickKnob.style.transform = `translate(calc(-50% + ${x * radius}px), calc(-50% + ${y * radius}px))`;
+}
+
+function attemptShoot() {
+  if (!hasJoinedRoom || shootCooldown > 0) return;
+  shootCooldown = 0.18;
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  socket.emit('shoot', {
+    origin: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+    direction: { x: direction.x, y: direction.y, z: direction.z },
+  });
 }
 
 function createCheckerTexture() {
