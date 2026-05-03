@@ -112,10 +112,10 @@ const combatFeed = document.createElement('div');
 combatFeed.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:8px 12px;background:rgba(0,0,0,0.45);color:#ffe9d2;border:1px solid rgba(255,255,255,0.2);border-radius:10px;font-family:system-ui,sans-serif;font-size:13px;opacity:0;transition:opacity 0.18s ease;z-index:20;pointer-events:none;';
 document.body.appendChild(combatFeed);
 
-// ─── Mode switch buttons (top-right above choices when room joined) ────────────
+// ─── Mode switch buttons (top-left HUD, below other labels) ──────────────────
 const modeSwitch = document.createElement('div');
-modeSwitch.style.cssText = 'position:fixed;bottom:16px;right:16px;display:flex;gap:6px;z-index:26;';
-document.body.appendChild(modeSwitch);
+modeSwitch.style.cssText = 'display:flex;gap:6px;pointer-events:auto;';
+hudLeft.appendChild(modeSwitch);
 
 const pcModeButton = document.createElement('button');
 pcModeButton.textContent = 'PC';
@@ -524,13 +524,16 @@ document.addEventListener('contextmenu', (e) => {
 
 // Keyboard: 1/2/3 answer, T type mode, E nonlethal
 window.addEventListener('keydown', (e) => {
-  if (isTypingMode) return;
-  if (!hasJoinedRoom) return;
+  if (e.code === 'KeyT') {
+    if (isTypingMode) exitTypingMode();
+    else if (hasJoinedRoom) enterTypingMode();
+    return;
+  }
+  if (isTypingMode || !hasJoinedRoom) return;
 
   if (e.code === 'Digit1') submitAnswerByIndex(0);
   else if (e.code === 'Digit2') submitAnswerByIndex(1);
   else if (e.code === 'Digit3') submitAnswerByIndex(2);
-  else if (e.code === 'KeyT') enterTypingMode();
   else if (e.code === 'KeyE') attemptNonLethalShoot();
 });
 
