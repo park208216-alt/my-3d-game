@@ -740,7 +740,8 @@ function submitChoice(idx: number) {
     addCurrency(CURRENCY_MC);
     pickNewWord();
   } else {
-    showQuizMsg('틀렸습니다');
+    addCurrency(-1);
+    showQuizMsg('틀렸습니다 (-1)');
   }
 }
 
@@ -773,10 +774,12 @@ function exitTypingMode() {
   const correct = currentWord.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
   if (correct) {
     addCurrency(CURRENCY_TYPE);
-    exitTypingMode();
     pickNewWord();
+    (e.target as HTMLInputElement).value = '';
+    (e.target as HTMLInputElement).focus();
   } else {
-    showQuizMsg('틀렸습니다');
+    addCurrency(-1);
+    showQuizMsg('틀렸습니다 (-1)');
     (e.target as HTMLInputElement).value = '';
   }
 });
@@ -788,7 +791,7 @@ function showQuizMsg(msg: string) {
 }
 
 function addCurrency(amt: number) {
-  currency = Math.min(CURRENCY_MAX, currency + amt);
+  currency = Math.max(0, Math.min(CURRENCY_MAX, currency + amt));
   updateHud();
 }
 
