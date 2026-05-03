@@ -641,12 +641,10 @@ function startBattle() {
 function updateCamera() {
   const lookZ = FIELD_LEN / 2 + camPan;
   if (localSide === 'p1') {
-    // P1: own base (z=0) is on right side, camera watches from +X
-    camera.position.set(18, 8, lookZ);
+    camera.position.set(12, 5, lookZ);
     camera.lookAt(0, 0, lookZ);
   } else {
-    // P2: own base (z=FIELD_LEN) is on right side, camera watches from -X
-    camera.position.set(-18, 8, lookZ);
+    camera.position.set(-12, 5, lookZ);
     camera.lookAt(0, 0, lookZ);
   }
 }
