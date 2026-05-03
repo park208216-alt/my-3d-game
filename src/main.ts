@@ -73,7 +73,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a2540);
 scene.fog = new THREE.Fog(0x1a2540, 35, 60);
 
-const camera = new THREE.PerspectiveCamera(55, window.innerWidth / CANVAS_H(), 0.1, 200);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
 
@@ -641,11 +641,11 @@ function startBattle() {
 function updateCamera() {
   const lookZ = FIELD_LEN / 2 + camPan;
   if (localSide === 'p1') {
-    camera.position.set(12, 5, lookZ);
-    camera.lookAt(0, 0, lookZ);
+    camera.position.set(8, 5, lookZ);
+    camera.lookAt(0, -0.5, lookZ);
   } else {
-    camera.position.set(-12, 5, lookZ);
-    camera.lookAt(0, 0, lookZ);
+    camera.position.set(-8, 5, lookZ);
+    camera.lookAt(0, -0.5, lookZ);
   }
 }
 
