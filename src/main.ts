@@ -5,7 +5,8 @@ import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SP
 import type { AnimalDef } from './animals';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const CURRENCY_MAX = 10;
+const CURRENCY_MAX = 15;
+const CURRENCY_AUTO_INTERVAL = 2; // seconds
 const CURRENCY_MC = 1;   // multiple-choice correct
 const CURRENCY_TYPE = 3; // typing correct
 const ROUND_DURATION = 30; // seconds per round
@@ -83,7 +84,7 @@ sun.position.set(5, 12, -5);
 scene.add(sun);
 
 // ─── Camera Pan ───────────────────────────────────────────────────────────────
-let camX = 0;
+let camPan = 0; // Z-axis offset for side-view panning
 let camPanStartX = 0;
 let camPanActive = false;
 
@@ -95,7 +96,9 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   if (!camPanActive) return;
   const dx = e.clientX - camPanStartX;
   camPanStartX = e.clientX;
-  camX = Math.max(-6, Math.min(6, camX - dx * 0.02));
+  // drag right → see more toward p1 base (lower Z); invert for p2
+  const dir = localSide === 'p2' ? 1 : -1;
+  camPan = Math.max(-12, Math.min(12, camPan + dir * dx * 0.04));
 });
 renderer.domElement.addEventListener('pointerup', () => { camPanActive = false; });
 renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; });
@@ -430,6 +433,7 @@ let currentScreen: Screen = 'menu';
 let battleActive = false;
 
 let currency = 0;
+let autoCurrencyTimer = 0;
 let round = 1;
 let roundTimer = 0;
 let aiSpawnTimer = 0;
@@ -615,6 +619,8 @@ function startBattle() {
   clearBattle();
   battleActive = true;
   currency = 0;
+  autoCurrencyTimer = 0;
+  camPan = 0;
   round = 1;
   roundTimer = ROUND_DURATION;
   aiSpawnTimer = AI_ROUNDS[0].interval;
@@ -633,13 +639,15 @@ function startBattle() {
 
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera() {
-  const lookZ = FIELD_LEN / 2;
+  const lookZ = FIELD_LEN / 2 + camPan;
   if (localSide === 'p1') {
-    camera.position.set(camX, 11, -9);
-    camera.lookAt(camX, 0, lookZ);
+    // P1: own base (z=0) is on right side, camera watches from +X
+    camera.position.set(18, 8, lookZ);
+    camera.lookAt(0, 0, lookZ);
   } else {
-    camera.position.set(camX, 11, FIELD_LEN + 9);
-    camera.lookAt(camX, 0, lookZ);
+    // P2: own base (z=FIELD_LEN) is on right side, camera watches from -X
+    camera.position.set(-18, 8, lookZ);
+    camera.lookAt(0, 0, lookZ);
   }
 }
 
@@ -871,6 +879,12 @@ function animate() {
   updateCamera();
 
   if (battleActive) {
+    autoCurrencyTimer += dt;
+    if (autoCurrencyTimer >= CURRENCY_AUTO_INTERVAL) {
+      autoCurrencyTimer -= CURRENCY_AUTO_INTERVAL;
+      addCurrency(1);
+    }
+
     stepUnits(dt);
     syncUnitMeshes();
 
