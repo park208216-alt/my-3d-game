@@ -136,7 +136,7 @@ function updateTowerVisual(side: Side) {
   if (side === 'p1') p1TowerLastStage = stage; else p2TowerLastStage = stage;
   const color = side === 'p1' ? 0x6699ff : 0xff6666;
   const newMesh = tintClone(template, color);
-  newMesh.scale.setScalar(3.5);
+  newMesh.scale.setScalar(5.0);
   newMesh.position.set(0, 0, side === 'p1' ? 0 : FIELD_LEN);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
@@ -147,6 +147,9 @@ function updateTowerVisual(side: Side) {
   if (side === 'p1') p1TowerMesh = newMesh; else p2TowerMesh = newMesh;
   scene.add(newMesh);
   baseTowerMeshes.push(newMesh);
+  // Hide the fallback box now that the GLB tower is in place
+  const fallback = side === 'p1' ? p1Base?.mesh : p2Base?.mesh;
+  if (fallback) fallback.visible = false;
 }
 
 function placeBaseTowers() {
@@ -298,12 +301,12 @@ buildField();
 
 // ─── Base Factory ─────────────────────────────────────────────────────────────
 function makeBase(z: number, color: number, hp: number): BaseSim {
+  // Fallback box — always visible until tower GLB loads and replaces it
   const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(3, 3, 1.5),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.4 })
+    new THREE.BoxGeometry(2.5, 4, 2.5),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
   );
-  mesh.position.set(0, 1.5, z);
-  mesh.visible = false; // tower GLB is the visual; box is kept only for scene bookkeeping
+  mesh.position.set(0, 2, z);
   scene.add(mesh);
 
   const hpSprite = makeHpSprite(hp, hp);
@@ -948,8 +951,8 @@ function playerSummon(animalId: string) {
 function clearBattle() {
   for (const u of [...units]) removeUnitMeshes(u);
   units = [];
-  if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
-  if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
+  if (p1Base) { p1Base.mesh.visible = true; scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
+  if (p2Base) { p2Base.mesh.visible = true; scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
   for (const m of baseTowerMeshes) scene.remove(m);
   baseTowerMeshes.length = 0;
   p1TowerMesh = null;
