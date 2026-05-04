@@ -86,7 +86,7 @@ function loadEnvironment() {
     loader.load(`${tdBase}tower-round-build-${letter}.glb`, g => {
       towerBuildTemplates[i] = g.scene;
       if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
-    }, undefined, () => {});
+    }, undefined, (err) => { console.warn(`tower-round-build-${letter}.glb 로딩 실패:`, err); });
   }
   for (const name of ['tree_default', 'tree_cone', 'tree_oak']) {
     loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
@@ -131,9 +131,9 @@ function updateTowerVisual(side: Side) {
   const stage = getTowerVisualStage(level, base.hp, base.maxHp);
   const lastStage = side === 'p1' ? p1TowerLastStage : p2TowerLastStage;
   if (stage === lastStage) return;
-  if (side === 'p1') p1TowerLastStage = stage; else p2TowerLastStage = stage;
   const template = towerBuildTemplates[stage];
-  if (!template) return;
+  if (!template) return; // template not yet loaded — keep lastStage so we retry when it loads
+  if (side === 'p1') p1TowerLastStage = stage; else p2TowerLastStage = stage;
   const color = side === 'p1' ? 0x6699ff : 0xff6666;
   const newMesh = tintClone(template, color);
   newMesh.scale.setScalar(3.5);
