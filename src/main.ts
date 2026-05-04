@@ -66,16 +66,31 @@ let p2TowerMesh: THREE.Group | null = null;
 const treeTemplates: THREE.Group[] = [];
 const baseTowerMeshes: THREE.Object3D[] = [];
 
-function tintClone(template: THREE.Group, hexColor: number): THREE.Group {
+function tintClone(template: THREE.Group, flagColor: number): THREE.Group {
   const model = template.clone(true);
-  // Use solid color material — avoids external texture loading issues entirely
-  const solidMat = new THREE.MeshStandardMaterial({ color: hexColor, roughness: 0.5, metalness: 0.1 });
   model.traverse(obj => {
     if ((obj as THREE.Mesh).isMesh) {
-      (obj as THREE.Mesh).material = solidMat;
-      (obj as THREE.Mesh).castShadow = true;
+      const mesh = obj as THREE.Mesh;
+      // Clone material to avoid mutation of shared template material
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map(m => m.clone())
+        : (mesh.material as THREE.Material).clone();
+      mesh.castShadow = true;
     }
   });
+  // Add a small team-colored flag on top so p1/p2 are distinguishable
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 1.0, 6),
+    new THREE.MeshStandardMaterial({ color: 0xcccccc })
+  );
+  pole.position.set(0, 1.5, 0);
+  const banner = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.3, 0.05),
+    new THREE.MeshStandardMaterial({ color: flagColor })
+  );
+  banner.position.set(0.27, 2.05, 0);
+  model.add(pole);
+  model.add(banner);
   return model;
 }
 
