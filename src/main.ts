@@ -147,9 +147,6 @@ function updateTowerVisual(side: Side) {
   if (side === 'p1') p1TowerMesh = newMesh; else p2TowerMesh = newMesh;
   scene.add(newMesh);
   baseTowerMeshes.push(newMesh);
-  // Hide the fallback box now that the GLB tower is in place
-  const fallback = side === 'p1' ? p1Base?.mesh : p2Base?.mesh;
-  if (fallback) fallback.visible = false;
 }
 
 function placeBaseTowers() {
@@ -951,8 +948,8 @@ function playerSummon(animalId: string) {
 function clearBattle() {
   for (const u of [...units]) removeUnitMeshes(u);
   units = [];
-  if (p1Base) { p1Base.mesh.visible = true; scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
-  if (p2Base) { p2Base.mesh.visible = true; scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
+  if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
+  if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
   for (const m of baseTowerMeshes) scene.remove(m);
   baseTowerMeshes.length = 0;
   p1TowerMesh = null;
@@ -1000,11 +997,11 @@ async function startBattle() {
 function updateCamera() {
   const lookZ = FIELD_LEN / 2 + camPan;
   if (localSide === 'p1') {
-    camera.position.set(8, 5, lookZ);
-    camera.lookAt(0, 2, lookZ);
+    camera.position.set(18, 10, lookZ);
+    camera.lookAt(0, 1, lookZ);
   } else {
-    camera.position.set(-8, 5, lookZ);
-    camera.lookAt(0, 2, lookZ);
+    camera.position.set(-18, 10, lookZ);
+    camera.lookAt(0, 1, lookZ);
   }
 }
 
