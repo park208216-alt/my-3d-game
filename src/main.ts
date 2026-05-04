@@ -22,7 +22,7 @@ let modelsLoadPromise: Promise<void> | null = null;
 function loadAllModels(): Promise<void> {
   if (modelsLoadPromise) return modelsLoadPromise;
   const loader = new GLTFLoader();
-  const base = '/assets/animals/';
+  const base = `${import.meta.env.BASE_URL}kenney_cube-pets/Models/GLB%20format/`;
   modelsLoadPromise = Promise.all(
     Object.entries(MODEL_MAP).map(([id, name]) =>
       new Promise<void>((resolve) => {
