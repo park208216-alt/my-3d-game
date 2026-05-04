@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  base: '/my-3d-game/',
   server: {
     host: '0.0.0.0',
     allowedHosts: true,
