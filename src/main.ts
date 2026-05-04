@@ -264,7 +264,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   camPanStartX = e.clientX;
   // drag right → see more toward p1 base (lower Z); invert for p2
   const dir = localSide === 'p2' ? 1 : -1;
-  camPan = Math.max(-18, Math.min(18, camPan + dir * dx * 0.04));
+  camPan = Math.max(-24, Math.min(24, camPan + dir * dx * 0.04));
 });
 renderer.domElement.addEventListener('pointerup', () => { camPanActive = false; });
 renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; });
@@ -995,13 +995,15 @@ async function startBattle() {
 
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera() {
-  const lookZ = FIELD_LEN / 2 + camPan;
+  // Start near own base (1/3 of field for p1, 2/3 for p2) so it's in frame at game start
+  const baseZ = localSide === 'p1' ? FIELD_LEN * 0.33 : FIELD_LEN * 0.67;
+  const lookZ = baseZ + camPan;
   if (localSide === 'p1') {
-    camera.position.set(18, 10, lookZ);
-    camera.lookAt(0, 1, lookZ);
+    camera.position.set(8, 5, lookZ);
+    camera.lookAt(0, 2, lookZ);
   } else {
-    camera.position.set(-18, 10, lookZ);
-    camera.lookAt(0, 1, lookZ);
+    camera.position.set(-8, 5, lookZ);
+    camera.lookAt(0, 2, lookZ);
   }
 }
 
