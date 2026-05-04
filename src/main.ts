@@ -17,32 +17,44 @@ const MODEL_MAP: Record<string, string> = {
 
 const modelTemplates: Record<string, THREE.Group> = {};
 let modelsReady = false;
+let modelsLoadPromise: Promise<void> | null = null;
 
-async function loadAllModels(): Promise<void> {
+function loadAllModels(): Promise<void> {
+  if (modelsLoadPromise) return modelsLoadPromise;
   const loader = new GLTFLoader();
   const base = '/assets/animals/';
-  await Promise.all(
+  modelsLoadPromise = Promise.all(
     Object.entries(MODEL_MAP).map(([id, name]) =>
-      new Promise<void>((resolve, reject) => {
-        loader.load(`${base}${name}.glb`, (gltf) => {
-          const root = gltf.scene;
-          // Ensure all meshes cast / receive shadows and are double-sided
-          root.traverse((obj) => {
-            if ((obj as THREE.Mesh).isMesh) {
-              const mesh = obj as THREE.Mesh;
-              mesh.castShadow = true;
-              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-              mats.forEach(m => { (m as THREE.MeshStandardMaterial).side = THREE.FrontSide; });
-            }
-          });
-          modelTemplates[id] = root;
-          resolve();
-        }, undefined, reject);
+      new Promise<void>((resolve) => {
+        loader.load(
+          `${base}${name}.glb`,
+          (gltf) => {
+            const root = gltf.scene;
+            root.traverse((obj) => {
+              if ((obj as THREE.Mesh).isMesh) {
+                const mesh = obj as THREE.Mesh;
+                mesh.castShadow = true;
+                const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                mats.forEach(m => { (m as THREE.MeshStandardMaterial).side = THREE.FrontSide; });
+              }
+            });
+            modelTemplates[id] = root;
+            resolve();
+          },
+          undefined,
+          (err) => {
+            console.warn(`Failed to load ${name}.glb:`, err);
+            resolve(); // 실패해도 게임은 시작 (폴백 박스 사용)
+          }
+        );
       })
     )
-  );
-  modelsReady = true;
+  ).then(() => { modelsReady = true; });
+  return modelsLoadPromise;
 }
+
+// 페이지 로드와 동시에 백그라운드에서 모델 로딩 시작
+loadAllModels();
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CURRENCY_MAX = 15;
@@ -705,7 +717,10 @@ function clearBattle() {
 async function startBattle() {
   if (!modelsReady) {
     showLoadingOverlay(true);
-    await loadAllModels();
+    await Promise.race([
+      loadAllModels(),
+      new Promise<void>(r => setTimeout(r, 5000)), // 5초 초과 시 그냥 시작
+    ]);
     showLoadingOverlay(false);
   }
   clearBattle();
