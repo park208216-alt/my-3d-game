@@ -1,8 +1,48 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y, MOLE_SURFACE_DETECT } from './animals';
 import type { AnimalDef } from './animals';
+
+// ─── Model Loading ────────────────────────────────────────────────────────────
+const MODEL_MAP: Record<string, string> = {
+  lion:     'animal-lion',
+  elephant: 'animal-elephant',
+  mouse:    'animal-bunny',
+  eagle:    'animal-parrot',
+  monkey:   'animal-monkey',
+  mole:     'animal-beaver',
+};
+
+const modelTemplates: Record<string, THREE.Group> = {};
+let modelsReady = false;
+
+async function loadAllModels(): Promise<void> {
+  const loader = new GLTFLoader();
+  const base = '/assets/animals/';
+  await Promise.all(
+    Object.entries(MODEL_MAP).map(([id, name]) =>
+      new Promise<void>((resolve, reject) => {
+        loader.load(`${base}${name}.glb`, (gltf) => {
+          const root = gltf.scene;
+          // Ensure all meshes cast / receive shadows and are double-sided
+          root.traverse((obj) => {
+            if ((obj as THREE.Mesh).isMesh) {
+              const mesh = obj as THREE.Mesh;
+              mesh.castShadow = true;
+              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              mats.forEach(m => { (m as THREE.MeshStandardMaterial).side = THREE.FrontSide; });
+            }
+          });
+          modelTemplates[id] = root;
+          resolve();
+        }, undefined, reject);
+      })
+    )
+  );
+  modelsReady = true;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CURRENCY_MAX = 15;
@@ -36,7 +76,7 @@ interface UnitSim {
   maxHp: number;
   state: UnitState;
   atkTimer: number;
-  mesh: THREE.Mesh | null;
+  mesh: THREE.Object3D | null;
   hpSprite: THREE.Sprite | null;
   dustMesh: THREE.Mesh | null; // mole indicator
   lastHp: number;
@@ -187,22 +227,45 @@ function refreshHpSprite(sprite: THREE.Sprite, hp: number, maxHp: number) {
 }
 
 // ─── Unit Mesh Factory ────────────────────────────────────────────────────────
-function makeUnitMesh(def: AnimalDef, side: Side): THREE.Mesh {
-  const s = def.size;
-  const color = side === 'p1' ? def.color : shiftHue(def.color);
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(s * 2, s * 2, s * 2),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
-  );
-  return mesh;
-}
+// Scale factors per animal so they look right at game-unit sizes
+const MODEL_SCALE: Record<string, number> = {
+  lion: 0.9, elephant: 1.2, mouse: 0.55, eagle: 0.7, monkey: 0.75, mole: 0.6,
+};
 
-function shiftHue(hex: number): number {
-  // Tint enemy units slightly red
-  const r = ((hex >> 16) & 0xff);
-  const g = ((hex >> 8) & 0xff);
-  const b = (hex & 0xff);
-  return ((Math.min(255, r + 60)) << 16) | ((Math.max(0, g - 30)) << 8) | (Math.max(0, b - 30));
+function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
+  const template = modelTemplates[def.id];
+  if (!template) {
+    // Fallback box if model not loaded yet
+    return new THREE.Mesh(
+      new THREE.BoxGeometry(def.size * 2, def.size * 2, def.size * 2),
+      new THREE.MeshStandardMaterial({ color: def.color })
+    );
+  }
+
+  const model = template.clone(true);
+  const s = MODEL_SCALE[def.id] ?? def.size;
+  model.scale.set(s, s, s);
+
+  // p2 faces the opposite direction (toward p1 base)
+  if (side === 'p2') model.rotation.y = Math.PI;
+
+  // Tint p2 units with a slight blue overlay so they're visually distinct
+  if (side === 'p2') {
+    model.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        mesh.material = mats.map((m) => {
+          const c = (m as THREE.MeshStandardMaterial).clone();
+          c.color.multiplyScalar(0.7);
+          c.color.b = Math.min(1, c.color.b + 0.4);
+          return c;
+        });
+      }
+    });
+  }
+
+  return model;
 }
 
 function makeDustMesh(): THREE.Mesh {
@@ -256,7 +319,18 @@ function spawnUnit(animalId: string, side: Side): UnitSim {
 }
 
 function removeUnitMeshes(unit: UnitSim) {
-  if (unit.mesh) { scene.remove(unit.mesh); unit.mesh.geometry.dispose(); (unit.mesh.material as THREE.Material).dispose(); unit.mesh = null; }
+  if (unit.mesh) {
+    scene.remove(unit.mesh);
+    unit.mesh.traverse((obj) => {
+      const m = obj as THREE.Mesh;
+      if (m.isMesh) {
+        m.geometry?.dispose();
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        mats.forEach(mat => (mat as THREE.Material).dispose());
+      }
+    });
+    unit.mesh = null;
+  }
   if (unit.hpSprite) { scene.remove(unit.hpSprite); const m = unit.hpSprite.material as THREE.SpriteMaterial; if (m.map) m.map.dispose(); m.dispose(); unit.hpSprite = null; }
   if (unit.dustMesh) { scene.remove(unit.dustMesh); unit.dustMesh.geometry.dispose(); (unit.dustMesh.material as THREE.Material).dispose(); unit.dustMesh = null; }
 }
@@ -536,6 +610,18 @@ document.body.insertAdjacentHTML('beforeend', `
 </div>
 `);
 
+// ─── Loading Overlay ──────────────────────────────────────────────────────────
+document.body.insertAdjacentHTML('beforeend', `
+<div id="loading-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,14,30,0.96);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+  <div style="width:48px;height:48px;border:5px solid rgba(255,255,255,0.15);border-top-color:#41c1ff;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+  <div style="color:#a0c8ff;font-size:14px;">모델 로딩 중...</div>
+</div>
+<style>@keyframes spin{to{transform:rotate(360deg);}}</style>
+`);
+function showLoadingOverlay(show: boolean) {
+  ($('loading-overlay') as HTMLElement).style.display = show ? 'flex' : 'none';
+}
+
 // ─── Screen Manager ───────────────────────────────────────────────────────────
 function showScreen(s: Screen) {
   currentScreen = s;
@@ -616,7 +702,12 @@ function clearBattle() {
   if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
 }
 
-function startBattle() {
+async function startBattle() {
+  if (!modelsReady) {
+    showLoadingOverlay(true);
+    await loadAllModels();
+    showLoadingOverlay(false);
+  }
   clearBattle();
   battleActive = true;
   currency = 0;
