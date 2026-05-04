@@ -60,7 +60,9 @@ loadAllModels();
 const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
 const nkBase = `${import.meta.env.BASE_URL}kenney_nature-kit/Models/GLTF%20format/`;
 
-let towerTemplate: THREE.Group | null = null;
+const towerBuildTemplates: (THREE.Group | null)[] = Array(6).fill(null);
+let p1TowerMesh: THREE.Group | null = null;
+let p2TowerMesh: THREE.Group | null = null;
 const treeTemplates: THREE.Group[] = [];
 const baseTowerMeshes: THREE.Object3D[] = [];
 
@@ -79,10 +81,13 @@ function tintClone(template: THREE.Group, hexColor: number): THREE.Group {
 
 function loadEnvironment() {
   const loader = new GLTFLoader();
-  loader.load(`${tdBase}tower-round-bottom-a.glb`, g => {
-    towerTemplate = g.scene;
-    if (battleActive) placeBaseTowers(); // 배틀 중 로딩 완료되면 즉시 배치
-  }, undefined, () => {});
+  for (let i = 0; i < 6; i++) {
+    const letter = String.fromCharCode(97 + i); // a-f
+    loader.load(`${tdBase}tower-round-build-${letter}.glb`, g => {
+      towerBuildTemplates[i] = g.scene;
+      if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
+    }, undefined, () => {});
+  }
   for (const name of ['tree_default', 'tree_cone', 'tree_oak']) {
     loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
   }
@@ -114,21 +119,54 @@ function placeBackgroundTrees() {
   }
 }
 
+function getTowerVisualStage(level: number, hp: number, maxHp: number): number {
+  if (maxHp <= 0) return 0;
+  return Math.min(level, Math.floor((level + 1) * (hp / maxHp)));
+}
+
+function updateTowerVisual(side: Side) {
+  if (!p1Base || !p2Base) return;
+  const level = side === 'p1' ? p1TowerLevel : p2TowerLevel;
+  const base = side === 'p1' ? p1Base : p2Base;
+  const stage = getTowerVisualStage(level, base.hp, base.maxHp);
+  const lastStage = side === 'p1' ? p1TowerLastStage : p2TowerLastStage;
+  if (stage === lastStage) return;
+  if (side === 'p1') p1TowerLastStage = stage; else p2TowerLastStage = stage;
+  const template = towerBuildTemplates[stage];
+  if (!template) return;
+  const color = side === 'p1' ? 0x6699ff : 0xff6666;
+  const newMesh = tintClone(template, color);
+  newMesh.scale.setScalar(3.5);
+  newMesh.position.set(0, 0, side === 'p1' ? 0 : FIELD_LEN);
+  const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
+  if (oldMesh) {
+    scene.remove(oldMesh);
+    const idx = baseTowerMeshes.indexOf(oldMesh);
+    if (idx >= 0) baseTowerMeshes.splice(idx, 1);
+  }
+  if (side === 'p1') p1TowerMesh = newMesh; else p2TowerMesh = newMesh;
+  scene.add(newMesh);
+  baseTowerMeshes.push(newMesh);
+}
+
 function placeBaseTowers() {
   for (const m of baseTowerMeshes) scene.remove(m);
   baseTowerMeshes.length = 0;
-  if (!towerTemplate) return;
-
-  const add = (z: number, color: number) => {
-    const tower = tintClone(towerTemplate!, color);
-    tower.scale.setScalar(3.5);
-    tower.position.set(0, 0, z);
-    scene.add(tower);
-    baseTowerMeshes.push(tower);
-  };
-  add(0, 0x6699ff);          // p1 파란 기지
-  add(FIELD_LEN, 0xff6666);  // p2 빨간 기지
+  p1TowerMesh = null;
+  p2TowerMesh = null;
+  p1TowerLastStage = -1;
+  p2TowerLastStage = -1;
+  updateTowerVisual('p1');
+  updateTowerVisual('p2');
 }
+
+// ─── Tower Upgrade ────────────────────────────────────────────────────────────
+let p1TowerLevel = 0; // 0-5 maps to build-a through build-f
+let p2TowerLevel = 0;
+let p1TowerLastStage = -1;
+let p2TowerLastStage = -1;
+const HP_PER_UPGRADE = 15;
+const UPGRADE_COSTS = [4, 5, 6, 7, 8]; // cost to go from level i to i+1
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CURRENCY_MAX = 15;
@@ -631,6 +669,8 @@ function syncBaseMeshes() {
       base.lastHp = base.hp;
     }
   }
+  updateTowerVisual('p1');
+  updateTowerVisual('p2');
 }
 
 // ─── Game State ───────────────────────────────────────────────────────────────
@@ -757,6 +797,10 @@ document.body.insertAdjacentHTML('beforeend', `
   <!-- Left: summon buttons -->
   <div id="panel-left" style="position:absolute;top:32px;left:0;width:50%;bottom:0;display:flex;flex-direction:column;padding:8px;gap:6px;">
     <div id="summon-grid" style="display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:6px;flex:1;"></div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button id="btn-upgrade" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,200,80,0.5);background:rgba(255,200,80,0.12);color:#ffe08a;font-weight:700;cursor:pointer;font-size:11px;">⬆ 기지 업그레이드</button>
+      <span id="upgrade-info" style="font-size:10px;opacity:0.7;white-space:nowrap;min-width:50px;text-align:right;"></span>
+    </div>
   </div>
   <!-- Right: word quiz -->
   <div id="panel-right" style="position:absolute;top:32px;right:0;width:50%;bottom:0;display:flex;flex-direction:column;padding:8px;gap:6px;overflow:hidden;">
@@ -844,6 +888,45 @@ function updateSummonButtons() {
   }
 }
 
+function updateUpgradeButton() {
+  const myLevel = localSide === 'p1' ? p1TowerLevel : p2TowerLevel;
+  const btn = $('btn-upgrade') as HTMLButtonElement;
+  const info = $('upgrade-info');
+  if (myLevel >= 5) {
+    btn.textContent = '⬆ 기지 최대 레벨';
+    btn.style.opacity = '0.4';
+    btn.style.cursor = 'not-allowed';
+    info.textContent = 'MAX';
+  } else {
+    const cost = UPGRADE_COSTS[myLevel];
+    btn.textContent = `⬆ 업그레이드 (${cost}재화)`;
+    btn.style.opacity = currency >= cost ? '1' : '0.4';
+    btn.style.cursor = currency >= cost ? 'pointer' : 'not-allowed';
+    info.textContent = `Lv${myLevel}→${myLevel + 1}`;
+  }
+}
+
+function upgradeBase() {
+  if (!battleActive) return;
+  const myLevel = localSide === 'p1' ? p1TowerLevel : p2TowerLevel;
+  if (myLevel >= 5) return;
+  const cost = UPGRADE_COSTS[myLevel];
+  if (currency < cost) return;
+  currency -= cost;
+  if (gameMode === '1p') {
+    p1TowerLevel++;
+    const myBase = localSide === 'p1' ? p1Base : p2Base;
+    myBase.maxHp += HP_PER_UPGRADE;
+    myBase.hp = Math.min(myBase.maxHp, myBase.hp + HP_PER_UPGRADE);
+    myBase.lastHp = -1;
+    p1TowerLastStage = -1;
+    updateTowerVisual('p1');
+  } else {
+    socket.emit('battleUpgrade');
+  }
+  updateHud();
+}
+
 function playerSummon(animalId: string) {
   if (!battleActive) return;
   const cost = ANIMALS[animalId].cost;
@@ -858,6 +941,8 @@ function playerSummon(animalId: string) {
   }
 }
 
+($('btn-upgrade') as HTMLButtonElement).addEventListener('click', upgradeBase);
+
 // ─── Battle Init ──────────────────────────────────────────────────────────────
 function clearBattle() {
   for (const u of [...units]) removeUnitMeshes(u);
@@ -866,6 +951,12 @@ function clearBattle() {
   if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
   for (const m of baseTowerMeshes) scene.remove(m);
   baseTowerMeshes.length = 0;
+  p1TowerMesh = null;
+  p2TowerMesh = null;
+  p1TowerLevel = 0;
+  p2TowerLevel = 0;
+  p1TowerLastStage = -1;
+  p2TowerLastStage = -1;
 }
 
 async function startBattle() {
@@ -942,6 +1033,7 @@ function fmtTime(sec: number): string {
 function updateHud() {
   $('hud-currency').textContent = `재화: ${currency} / ${CURRENCY_MAX}`;
   updateSummonButtons();
+  updateUpgradeButton();
 
   // Top HUD HP bars
   if (p1Base && p2Base) {
@@ -1128,11 +1220,19 @@ socket.on('opponentLeft', () => {
 });
 
 // Server sends authoritative game state every 50ms
-socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }>; p1BaseHp: number; p2BaseHp: number; timeLeft?: number }) => {
+socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }>; p1BaseHp: number; p2BaseHp: number; p1MaxHp?: number; p2MaxHp?: number; p1UpgradeLevel?: number; p2UpgradeLevel?: number; timeLeft?: number }) => {
   if (!battleActive) return;
 
   if (typeof payload.p1BaseHp === 'number') p1Base.hp = payload.p1BaseHp;
   if (typeof payload.p2BaseHp === 'number') p2Base.hp = payload.p2BaseHp;
+  if (typeof payload.p1MaxHp === 'number') p1Base.maxHp = payload.p1MaxHp;
+  if (typeof payload.p2MaxHp === 'number') p2Base.maxHp = payload.p2MaxHp;
+  if (typeof payload.p1UpgradeLevel === 'number' && payload.p1UpgradeLevel !== p1TowerLevel) {
+    p1TowerLevel = payload.p1UpgradeLevel; p1TowerLastStage = -1;
+  }
+  if (typeof payload.p2UpgradeLevel === 'number' && payload.p2UpgradeLevel !== p2TowerLevel) {
+    p2TowerLevel = payload.p2UpgradeLevel; p2TowerLastStage = -1;
+  }
   if (typeof payload.timeLeft === 'number') multiplayerTimeLeft = payload.timeLeft;
 
   const serverIds = new Set(payload.units.map(u => u.id));

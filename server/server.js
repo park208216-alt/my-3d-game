@@ -25,6 +25,8 @@ const SPAWN_P1 = 2.5;
 const SPAWN_P2 = FIELD_LEN - 2.5;
 const MOLE_SURFACE_DETECT = 2.5;
 const BASE_HP = 60;
+const HP_PER_UPGRADE = 15;
+const UPGRADE_COSTS = [4, 5, 6, 7, 8];
 const MATCH_DURATION = 120; // 2분
 const TICK_MS = 50;
 
@@ -139,7 +141,7 @@ const battleRooms = new Map();
 const socketRoom = new Map();
 
 function startServerGame(roomCode, room) {
-  const gs = { units: [], p1BaseHp: BASE_HP, p2BaseHp: BASE_HP, unitIdCounter: 0, ended: false, timeLeft: MATCH_DURATION };
+  const gs = { units: [], p1BaseHp: BASE_HP, p2BaseHp: BASE_HP, p1MaxHp: BASE_HP, p2MaxHp: BASE_HP, p1UpgradeLevel: 0, p2UpgradeLevel: 0, unitIdCounter: 0, ended: false, timeLeft: MATCH_DURATION };
   room.gameState = gs;
 
   room.intervalId = setInterval(() => {
@@ -151,6 +153,10 @@ function startServerGame(roomCode, room) {
       units: gs.units.map(u => ({ id: u.id, animalId: u.animalId, side: u.side, z: u.z, x: u.x, hp: u.hp, maxHp: u.maxHp, state: u.state })),
       p1BaseHp: gs.p1BaseHp,
       p2BaseHp: gs.p2BaseHp,
+      p1MaxHp: gs.p1MaxHp,
+      p2MaxHp: gs.p2MaxHp,
+      p1UpgradeLevel: gs.p1UpgradeLevel,
+      p2UpgradeLevel: gs.p2UpgradeLevel,
       timeLeft: gs.timeLeft,
     });
 
@@ -229,6 +235,23 @@ io.on('connection', (socket) => {
       state: def.layer === 'underground' ? 'underground' : 'moving',
       atkTimer: 0,
     });
+  });
+
+  socket.on('battleUpgrade', () => {
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) return;
+    const room = battleRooms.get(roomCode);
+    if (!room?.gameState || room.gameState.ended) return;
+    const gs = room.gameState;
+    const side = room.p1 === socket.id ? 'p1' : 'p2';
+    const levelKey = side === 'p1' ? 'p1UpgradeLevel' : 'p2UpgradeLevel';
+    const hpKey = side === 'p1' ? 'p1BaseHp' : 'p2BaseHp';
+    const maxHpKey = side === 'p1' ? 'p1MaxHp' : 'p2MaxHp';
+    const level = gs[levelKey];
+    if (level >= 5) return;
+    gs[levelKey]++;
+    gs[maxHpKey] += HP_PER_UPGRADE;
+    gs[hpKey] = Math.min(gs[maxHpKey], gs[hpKey] + HP_PER_UPGRADE);
   });
 
   socket.on('disconnect', () => {
