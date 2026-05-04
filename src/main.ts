@@ -56,6 +56,77 @@ function loadAllModels(): Promise<void> {
 // 페이지 로드와 동시에 백그라운드에서 모델 로딩 시작
 loadAllModels();
 
+// ─── Environment Assets ───────────────────────────────────────────────────────
+const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
+const nkBase = `${import.meta.env.BASE_URL}kenney_nature-kit/Models/GLTF%20format/`;
+
+let towerTemplate: THREE.Group | null = null;
+const treeTemplates: THREE.Group[] = [];
+const baseTowerMeshes: THREE.Object3D[] = [];
+
+function tintClone(template: THREE.Group, hexColor: number): THREE.Group {
+  const model = template.clone(true);
+  const c = new THREE.Color(hexColor);
+  model.traverse(obj => {
+    if ((obj as THREE.Mesh).isMesh) {
+      const mesh = obj as THREE.Mesh;
+      const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[];
+      mesh.material = mats.map(m => { const n = m.clone(); n.color.multiply(c); return n; });
+    }
+  });
+  return model;
+}
+
+function loadEnvironment() {
+  const loader = new GLTFLoader();
+  loader.load(`${tdBase}tower-round-bottom-a.glb`, g => { towerTemplate = g.scene; }, undefined, () => {});
+  for (const name of ['tree_default', 'tree_cone', 'tree_oak']) {
+    loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
+  }
+}
+loadEnvironment();
+
+function placeBackgroundTrees() {
+  // Called each time a new tree template loads — deduplicate by checking if already placed
+  if (treeTemplates.length === 0) return;
+  // Only place when we have at least 2 templates for variety, or on first load
+  if (treeTemplates.length > 1 && scene.children.filter(c => (c as any).__isBgTree).length > 0) return;
+
+  // Remove old trees if re-placing
+  const old = scene.children.filter(c => (c as any).__isBgTree);
+  old.forEach(o => scene.remove(o));
+
+  const rng = (min: number, max: number) => min + Math.random() * (max - min);
+  for (let z = -2; z <= FIELD_LEN + 2; z += 3.5) {
+    for (const side of [-1, 1]) {
+      const tmpl = treeTemplates[Math.floor(Math.random() * treeTemplates.length)];
+      const tree = tmpl.clone(true);
+      const s = rng(1.6, 2.8);
+      tree.scale.set(s, s, s);
+      tree.position.set(side * rng(7, 11), 0, z + rng(-1.5, 1.5));
+      tree.rotation.y = rng(0, Math.PI * 2);
+      (tree as any).__isBgTree = true;
+      scene.add(tree);
+    }
+  }
+}
+
+function placeBaseTowers() {
+  for (const m of baseTowerMeshes) scene.remove(m);
+  baseTowerMeshes.length = 0;
+  if (!towerTemplate) return;
+
+  const add = (z: number, color: number) => {
+    const tower = tintClone(towerTemplate!, color);
+    tower.scale.setScalar(3.5);
+    tower.position.set(0, 0, z);
+    scene.add(tower);
+    baseTowerMeshes.push(tower);
+  };
+  add(0, 0x6699ff);          // p1 파란 기지
+  add(FIELD_LEN, 0xff6666);  // p2 빨간 기지
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CURRENCY_MAX = 15;
 const CURRENCY_AUTO_INTERVAL = 2; // seconds
@@ -759,6 +830,8 @@ function clearBattle() {
   units = [];
   if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
   if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
+  for (const m of baseTowerMeshes) scene.remove(m);
+  baseTowerMeshes.length = 0;
 }
 
 async function startBattle() {
@@ -783,6 +856,7 @@ async function startBattle() {
   const enemyBaseHp = gameMode === '1p' ? BASE_HP_1P_ENEMY : BASE_HP;
   p1Base = makeBase(0, 0x3366ff, BASE_HP);
   p2Base = makeBase(FIELD_LEN, 0xff3333, enemyBaseHp);
+  placeBaseTowers();
 
   buildSummonButtons();
   pickNewWord();
