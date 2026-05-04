@@ -566,7 +566,6 @@ let battleActive = false;
 
 let currency = 0;
 let autoCurrencyTimer = 0;
-let stateSyncTimer = 0;
 let round = 1;
 let roundTimer = 0;
 let aiSpawnTimer = 0;
@@ -580,7 +579,6 @@ let isTypingMode = false;
 const socketUrl = (import.meta.env.VITE_SOCKET_URL as string | undefined) ?? window.location.origin;
 const socket = io(socketUrl, { path: '/socket.io', transports: ['websocket'], autoConnect: false });
 let localSide: Side = 'p1';
-let isHost = false; // p1 runs authoritative simulation; p2 only renders
 
 // ─── HTML Screens ─────────────────────────────────────────────────────────────
 const $ = (id: string) => document.getElementById(id)!;
@@ -747,7 +745,7 @@ function playerSummon(animalId: string) {
   if (currency < cost) return;
   currency -= cost;
   updateHud();
-  if (gameMode === '1p' || isHost) {
+  if (gameMode === '1p') {
     spawnUnit(animalId, localSide);
   }
   if (gameMode === '2p') {
@@ -776,7 +774,6 @@ async function startBattle() {
   battleActive = true;
   currency = 0;
   autoCurrencyTimer = 0;
-  stateSyncTimer = 0;
   camPan = 0;
   round = 1;
   roundTimer = ROUND_DURATION;
@@ -971,12 +968,7 @@ socket.on('joinError', (msg: string) => { $('lobby-status').textContent = `오�
 
 socket.on('battleStart', (payload: { side: Side; opponentNick: string }) => {
   localSide = payload.side;
-  isHost = localSide === 'p1';
   startBattle();
-});
-
-socket.on('opponentSpawn', (payload: { animalId: string }) => {
-  spawnUnit(payload.animalId, localSide === 'p1' ? 'p2' : 'p1');
 });
 
 socket.on('opponentLeft', () => {
@@ -984,18 +976,15 @@ socket.on('opponentLeft', () => {
   else $('lobby-status').textContent = '상대방이 나갔습니다';
 });
 
-// Guest receives authoritative state from host and reconciles
-socket.on('opponentState', (payload: { p1BaseHp: number; p2BaseHp: number; units?: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }> }) => {
-  if (!battleActive || isHost) return;
+// Server sends authoritative game state every 50ms
+socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }>; p1BaseHp: number; p2BaseHp: number }) => {
+  if (!battleActive) return;
 
   if (typeof payload.p1BaseHp === 'number') p1Base.hp = payload.p1BaseHp;
   if (typeof payload.p2BaseHp === 'number') p2Base.hp = payload.p2BaseHp;
 
-  if (!Array.isArray(payload.units)) return;
-
   const serverIds = new Set(payload.units.map(u => u.id));
 
-  // Update existing or spawn new
   for (const su of payload.units) {
     const existing = units.find(u => u.id === su.id);
     if (existing) {
@@ -1007,16 +996,16 @@ socket.on('opponentState', (payload: { p1BaseHp: number; p2BaseHp: number; units
     }
   }
 
-  // Mark units gone from server as dead
   for (const u of units) {
     if (!serverIds.has(u.id)) u.state = 'dead';
   }
 });
 
-// Opponent's local game determined a result — mirror it
-socket.on('opponentResult', (payload: { result: 'win' | 'lose' }) => {
+// Server determined game result
+socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' }) => {
   if (!battleActive) return;
-  endBattle(payload.result === 'win' ? 'lose' : 'win');
+  const iWin = (payload.result === 'p1win' && localSide === 'p1') || (payload.result === 'p2win' && localSide === 'p2');
+  endBattle(iWin ? 'win' : 'lose');
 });
 
 // ─── Menu Button Handlers ──────────────────────────────────────────────────────
@@ -1079,7 +1068,7 @@ function animate() {
       addCurrency(1);
     }
 
-    if (gameMode === '1p' || isHost) stepUnits(dt);
+    if (gameMode === '1p') stepUnits(dt);
     syncUnitMeshes();
     for (const u of units) u.mixer?.update(dt);
 
@@ -1088,25 +1077,9 @@ function animate() {
       updateHud();
     }
 
-    checkWinLose();
-
-    if (gameMode === '1p') step1PAI(dt);
-
-    if (gameMode === '2p') {
-      stateSyncTimer += dt;
-      if (stateSyncTimer >= 0.1) {
-        stateSyncTimer = 0;
-        if (isHost) {
-          socket.emit('battleState', {
-            p1BaseHp: p1Base.hp,
-            p2BaseHp: p2Base.hp,
-            units: units.map(u => ({
-              id: u.id, animalId: u.animalId, side: u.side,
-              z: u.z, x: u.x, hp: u.hp, maxHp: u.maxHp, state: u.state,
-            })),
-          });
-        }
-      }
+    if (gameMode === '1p') {
+      checkWinLose();
+      step1PAI(dt);
     }
 
     if (quizMsgTimer > 0) {
