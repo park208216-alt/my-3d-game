@@ -60,49 +60,52 @@ loadAllModels();
 const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
 const nkBase = `${import.meta.env.BASE_URL}kenney_nature-kit/Models/GLTF%20format/`;
 
-const towerBuildTemplates: (THREE.Group | null)[] = Array(6).fill(null);
+type Team = 'red' | 'violet';
+let p1Team: Team = 'red';
+let p2Team: Team = 'violet';
+let myTeam: Team = 'red';
+let foeTeam: Team = 'violet';
+
+// RED: tower-round-top-c / tower-round-build-b / tower-round-build-e
+// VIOLET: tower-square-top-c / tower-square-build-c / tower-square-build-f
+const redTowerTemplates: (THREE.Group | null)[] = Array(3).fill(null);
+const violetTowerTemplates: (THREE.Group | null)[] = Array(3).fill(null);
 let p1TowerMesh: THREE.Group | null = null;
 let p2TowerMesh: THREE.Group | null = null;
 const treeTemplates: THREE.Group[] = [];
 const baseTowerMeshes: THREE.Object3D[] = [];
 
-function tintClone(template: THREE.Group, flagColor: number): THREE.Group {
+function tintClone(template: THREE.Group): THREE.Group {
   const model = template.clone(true);
   model.traverse(obj => {
     if ((obj as THREE.Mesh).isMesh) {
       const mesh = obj as THREE.Mesh;
-      // Clone material to avoid mutation of shared template material
       mesh.material = Array.isArray(mesh.material)
         ? mesh.material.map(m => m.clone())
         : (mesh.material as THREE.Material).clone();
       mesh.castShadow = true;
     }
   });
-  // Add a small team-colored flag on top so p1/p2 are distinguishable
-  const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 1.0, 6),
-    new THREE.MeshStandardMaterial({ color: 0xcccccc })
-  );
-  pole.position.set(0, 1.5, 0);
-  const banner = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, 0.3, 0.05),
-    new THREE.MeshStandardMaterial({ color: flagColor })
-  );
-  banner.position.set(0.27, 2.05, 0);
-  model.add(pole);
-  model.add(banner);
   return model;
 }
 
+const RED_TOWER_FILES   = ['tower-round-top-c',   'tower-round-build-b',   'tower-round-build-e'];
+const VIOLET_TOWER_FILES = ['tower-square-top-c', 'tower-square-build-c', 'tower-square-build-f'];
+
 function loadEnvironment() {
   const loader = new GLTFLoader();
-  for (let i = 0; i < 6; i++) {
-    const letter = String.fromCharCode(97 + i); // a-f
-    loader.load(`${tdBase}tower-round-build-${letter}.glb`, g => {
-      towerBuildTemplates[i] = g.scene;
+  RED_TOWER_FILES.forEach((name, i) => {
+    loader.load(`${tdBase}${name}.glb`, g => {
+      redTowerTemplates[i] = g.scene;
       if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
-    }, undefined, (err) => { console.warn(`tower-round-build-${letter}.glb 로딩 실패:`, err); });
-  }
+    }, undefined, err => { console.warn(`${name}.glb 로딩 실패:`, err); });
+  });
+  VIOLET_TOWER_FILES.forEach((name, i) => {
+    loader.load(`${tdBase}${name}.glb`, g => {
+      violetTowerTemplates[i] = g.scene;
+      if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
+    }, undefined, err => { console.warn(`${name}.glb 로딩 실패:`, err); });
+  });
   for (const name of ['tree_default', 'tree_cone', 'tree_oak']) {
     loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
   }
@@ -134,24 +137,19 @@ function placeBackgroundTrees() {
   }
 }
 
-function getTowerVisualStage(level: number, hp: number, maxHp: number): number {
-  if (maxHp <= 0) return 0;
-  return Math.min(level, Math.floor((level + 1) * (hp / maxHp)));
-}
-
 function updateTowerVisual(side: Side) {
   if (!p1Base || !p2Base) return;
   const level = side === 'p1' ? p1TowerLevel : p2TowerLevel;
-  const base = side === 'p1' ? p1Base : p2Base;
-  const stage = getTowerVisualStage(level, base.hp, base.maxHp);
+  const team  = side === 'p1' ? p1Team : p2Team;
   const lastStage = side === 'p1' ? p1TowerLastStage : p2TowerLastStage;
-  if (stage === lastStage) return;
-  const template = towerBuildTemplates[stage];
-  if (!template) return; // template not yet loaded — keep lastStage so we retry when it loads
-  if (side === 'p1') p1TowerLastStage = stage; else p2TowerLastStage = stage;
-  const color = side === 'p1' ? 0x4488ff : 0xff4444;
-  const newMesh = tintClone(template, color);
-  newMesh.scale.setScalar(2.0);
+  if (level === lastStage) return;
+  const templates = team === 'red' ? redTowerTemplates : violetTowerTemplates;
+  const template = templates[level];
+  if (!template) return;
+  if (side === 'p1') p1TowerLastStage = level; else p2TowerLastStage = level;
+  const newMesh = tintClone(template);
+  // scale: level 0 = 2.0, level 1 = 3.0, level 2 = 4.0 (doubles at max)
+  newMesh.scale.setScalar(2.0 * (1 + level * 0.5));
   newMesh.position.set(0, 0.4, side === 'p1' ? 0 : FIELD_LEN);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
@@ -176,12 +174,12 @@ function placeBaseTowers() {
 }
 
 // ─── Tower Upgrade ────────────────────────────────────────────────────────────
-let p1TowerLevel = 0; // 0-5 maps to build-a through build-f
+let p1TowerLevel = 0; // 0-2: initial / mid / max
 let p2TowerLevel = 0;
 let p1TowerLastStage = -1;
 let p2TowerLastStage = -1;
-const HP_PER_UPGRADE = 15;
-const UPGRADE_COSTS = [4, 5, 6, 7, 8]; // cost to go from level i to i+1
+const HP_PER_UPGRADE = 30;   // 2 upgrades × 30 = +60 → max = 2× BASE_HP
+const UPGRADE_COSTS = [10, 15];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CURRENCY_MAX = 15;
@@ -391,27 +389,27 @@ function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
   // p2 faces the opposite direction (toward p1 base)
   if (side === 'p2') model.rotation.y = Math.PI;
 
-  // Tint p2 units blue so they're visually distinct
-  if (side === 'p2') {
-    model.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        if (Array.isArray(mesh.material)) {
-          mesh.material = mesh.material.map((m) => {
-            const c = (m as THREE.MeshStandardMaterial).clone();
-            c.color.multiplyScalar(0.7);
-            c.color.b = Math.min(1, c.color.b + 0.4);
-            return c;
-          });
+  // Tint units by team color
+  const unitTeam = side === 'p1' ? p1Team : p2Team;
+  model.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh) {
+      const mesh = obj as THREE.Mesh;
+      const applyTint = (m: THREE.Material) => {
+        const c = (m as THREE.MeshStandardMaterial).clone();
+        if (unitTeam === 'red') {
+          c.color.r = Math.min(1, c.color.r * 1.1 + 0.08);
+          c.color.b = c.color.b * 0.6;
         } else {
-          const c = (mesh.material as THREE.MeshStandardMaterial).clone();
-          c.color.multiplyScalar(0.7);
-          c.color.b = Math.min(1, c.color.b + 0.4);
-          mesh.material = c;
+          c.color.r = c.color.r * 0.75;
+          c.color.b = Math.min(1, c.color.b + 0.35);
         }
-      }
-    });
-  }
+        return c;
+      };
+      mesh.material = Array.isArray(mesh.material)
+        ? mesh.material.map(applyTint)
+        : applyTint(mesh.material as THREE.Material);
+    }
+  });
 
   return model;
 }
@@ -904,11 +902,47 @@ function updateSummonButtons() {
   }
 }
 
+function applyTeamTheme() {
+  const panel = $('panel-battle') as HTMLElement;
+  const btnUp = $('btn-upgrade') as HTMLButtonElement;
+  const barMy = $('bar-my') as HTMLElement;
+  const barFoe = $('bar-foe') as HTMLElement;
+  if (myTeam === 'red') {
+    panel.style.background = 'rgba(30,8,8,0.95)';
+    panel.style.borderTopColor = 'rgba(255,100,100,0.25)';
+    btnUp.style.background = 'rgba(255,120,80,0.15)';
+    btnUp.style.borderColor = 'rgba(255,120,80,0.5)';
+    btnUp.style.color = '#ffcc88';
+    barMy.style.background = 'linear-gradient(90deg,#cc2222,#ff5555)';
+  } else {
+    panel.style.background = 'rgba(15,8,30,0.95)';
+    panel.style.borderTopColor = 'rgba(180,100,255,0.25)';
+    btnUp.style.background = 'rgba(180,120,255,0.15)';
+    btnUp.style.borderColor = 'rgba(180,120,255,0.5)';
+    btnUp.style.color = '#d0a0ff';
+    barMy.style.background = 'linear-gradient(90deg,#6622cc,#aa55ff)';
+  }
+  // foe bar reflects opponent's team
+  barFoe.style.background = foeTeam === 'red'
+    ? 'linear-gradient(90deg,#ff5555,#cc2222)'
+    : 'linear-gradient(90deg,#aa55ff,#6622cc)';
+  // summon buttons
+  for (const btn of summonBtns) {
+    if (myTeam === 'red') {
+      btn.style.background = 'rgba(160,30,30,0.25)';
+      btn.style.borderColor = 'rgba(255,120,120,0.3)';
+    } else {
+      btn.style.background = 'rgba(90,20,160,0.25)';
+      btn.style.borderColor = 'rgba(180,120,255,0.3)';
+    }
+  }
+}
+
 function updateUpgradeButton() {
   const myLevel = localSide === 'p1' ? p1TowerLevel : p2TowerLevel;
   const btn = $('btn-upgrade') as HTMLButtonElement;
   const info = $('upgrade-info');
-  if (myLevel >= 5) {
+  if (myLevel >= 2) {
     btn.textContent = '⬆ 기지 최대 레벨';
     btn.style.opacity = '0.4';
     btn.style.cursor = 'not-allowed';
@@ -918,14 +952,14 @@ function updateUpgradeButton() {
     btn.textContent = `⬆ 업그레이드 (${cost}재화)`;
     btn.style.opacity = currency >= cost ? '1' : '0.4';
     btn.style.cursor = currency >= cost ? 'pointer' : 'not-allowed';
-    info.textContent = `Lv${myLevel}→${myLevel + 1}`;
+    info.textContent = `Lv${myLevel + 1}→${myLevel + 2}`;
   }
 }
 
 function upgradeBase() {
   if (!battleActive) return;
   const myLevel = localSide === 'p1' ? p1TowerLevel : p2TowerLevel;
-  if (myLevel >= 5) return;
+  if (myLevel >= 2) return;
   const cost = UPGRADE_COSTS[myLevel];
   if (currency < cost) return;
   currency -= cost;
@@ -973,6 +1007,8 @@ function clearBattle() {
   p2TowerLevel = 0;
   p1TowerLastStage = -1;
   p2TowerLastStage = -1;
+  p1Team = 'red';
+  p2Team = 'violet';
 }
 
 async function startBattle() {
@@ -994,14 +1030,24 @@ async function startBattle() {
   aiSpawnTimer = AI_ROUNDS[0].interval;
   unitIdCounter = 0;
 
+  // Assign teams (1P: random; 2P: set by battleStart handler before calling startBattle)
+  if (gameMode === '1p') {
+    myTeam = Math.random() < 0.5 ? 'red' : 'violet';
+    foeTeam = myTeam === 'red' ? 'violet' : 'red';
+  }
+  p1Team = localSide === 'p1' ? myTeam : foeTeam;
+  p2Team = localSide === 'p1' ? foeTeam : myTeam;
+
+  const teamColor = (t: Team) => t === 'red' ? 0xcc2233 : 0x7722bb;
   const enemyBaseHp = gameMode === '1p' ? BASE_HP_1P_ENEMY : BASE_HP;
-  p1Base = makeBase(0, 0x3366ff, BASE_HP);
-  p2Base = makeBase(FIELD_LEN, 0xff3333, enemyBaseHp);
+  p1Base = makeBase(0, teamColor(p1Team), BASE_HP);
+  p2Base = makeBase(FIELD_LEN, teamColor(p2Team), enemyBaseHp);
   placeBaseTowers();
 
   multiplayerTimeLeft = 120;
 
   buildSummonButtons();
+  applyTeamTheme();
   pickNewWord();
   updateHud();
   showScreen('battle');
@@ -1209,8 +1255,10 @@ socket.on('disconnect', () => {
 });
 socket.on('joinError', (msg: string) => { $('lobby-status').textContent = `오류: ${msg}`; });
 
-socket.on('battleStart', (payload: { side: Side; opponentNick: string }) => {
+socket.on('battleStart', (payload: { side: Side; opponentNick: string; myTeam?: Team; foeTeam?: Team }) => {
   localSide = payload.side;
+  if (payload.myTeam)  myTeam  = payload.myTeam;
+  if (payload.foeTeam) foeTeam = payload.foeTeam;
   startBattle();
 });
 

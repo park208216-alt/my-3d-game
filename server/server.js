@@ -25,8 +25,8 @@ const SPAWN_P1 = 2.5;
 const SPAWN_P2 = FIELD_LEN - 2.5;
 const MOLE_SURFACE_DETECT = 2.5;
 const BASE_HP = 60;
-const HP_PER_UPGRADE = 15;
-const UPGRADE_COSTS = [4, 5, 6, 7, 8];
+const HP_PER_UPGRADE = 30;
+const UPGRADE_COSTS = [10, 15];
 const MATCH_DURATION = 120; // 2분
 const TICK_MS = 50;
 
@@ -210,8 +210,10 @@ io.on('connection', (socket) => {
       return;
     }
 
-    p1Socket.emit('battleStart', { side: 'p1', opponentNick: nickname });
-    socket.emit('battleStart', { side: 'p2', opponentNick: room.p1Nick });
+    const p1Team = Math.random() < 0.5 ? 'red' : 'violet';
+    const p2Team = p1Team === 'red' ? 'violet' : 'red';
+    p1Socket.emit('battleStart', { side: 'p1', opponentNick: nickname, myTeam: p1Team, foeTeam: p2Team });
+    socket.emit('battleStart', { side: 'p2', opponentNick: room.p1Nick, myTeam: p2Team, foeTeam: p1Team });
     startServerGame(roomCode, room);
   });
 
@@ -248,7 +250,7 @@ io.on('connection', (socket) => {
     const hpKey = side === 'p1' ? 'p1BaseHp' : 'p2BaseHp';
     const maxHpKey = side === 'p1' ? 'p1MaxHp' : 'p2MaxHp';
     const level = gs[levelKey];
-    if (level >= 5) return;
+    if (level >= 2) return;
     gs[levelKey]++;
     gs[maxHpKey] += HP_PER_UPGRADE;
     gs[hpKey] = Math.min(gs[maxHpKey], gs[hpKey] + HP_PER_UPGRADE);
