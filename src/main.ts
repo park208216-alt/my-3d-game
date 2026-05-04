@@ -624,7 +624,7 @@ document.body.insertAdjacentHTML('beforeend', `
 
 // ─── Loading Overlay ──────────────────────────────────────────────────────────
 document.body.insertAdjacentHTML('beforeend', `
-<div id="loading-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,14,30,0.96);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+<div id="loading-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,14,30,0.96);align-items:center;justify-content:center;flex-direction:column;gap:16px;">
   <div style="width:48px;height:48px;border:5px solid rgba(255,255,255,0.15);border-top-color:#41c1ff;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
   <div style="color:#a0c8ff;font-size:14px;">모델 로딩 중...</div>
 </div>
