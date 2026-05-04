@@ -68,12 +68,12 @@ const baseTowerMeshes: THREE.Object3D[] = [];
 
 function tintClone(template: THREE.Group, hexColor: number): THREE.Group {
   const model = template.clone(true);
-  const c = new THREE.Color(hexColor);
+  // Use solid color material — avoids external texture loading issues entirely
+  const solidMat = new THREE.MeshStandardMaterial({ color: hexColor, roughness: 0.5, metalness: 0.1 });
   model.traverse(obj => {
     if ((obj as THREE.Mesh).isMesh) {
-      const mesh = obj as THREE.Mesh;
-      const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[];
-      mesh.material = mats.map(m => { const n = m.clone(); n.color.multiply(c); return n; });
+      (obj as THREE.Mesh).material = solidMat;
+      (obj as THREE.Mesh).castShadow = true;
     }
   });
   return model;
@@ -134,10 +134,10 @@ function updateTowerVisual(side: Side) {
   const template = towerBuildTemplates[stage];
   if (!template) return; // template not yet loaded — keep lastStage so we retry when it loads
   if (side === 'p1') p1TowerLastStage = stage; else p2TowerLastStage = stage;
-  const color = side === 'p1' ? 0x6699ff : 0xff6666;
+  const color = side === 'p1' ? 0x4488ff : 0xff4444;
   const newMesh = tintClone(template, color);
-  newMesh.scale.setScalar(5.0);
-  newMesh.position.set(0, 0, side === 'p1' ? 0 : FIELD_LEN);
+  newMesh.scale.setScalar(2.0);
+  newMesh.position.set(0, 0.4, side === 'p1' ? 0 : FIELD_LEN);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
     scene.remove(oldMesh);
@@ -298,16 +298,16 @@ buildField();
 
 // ─── Base Factory ─────────────────────────────────────────────────────────────
 function makeBase(z: number, color: number, hp: number): BaseSim {
-  // Fallback box — always visible until tower GLB loads and replaces it
+  // Flat platform — always visible as base; tower GLB sits on top
   const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(2.5, 4, 2.5),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.5 })
+    new THREE.BoxGeometry(3, 0.4, 3),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.6 })
   );
-  mesh.position.set(0, 2, z);
+  mesh.position.set(0, 0.2, z);
   scene.add(mesh);
 
   const hpSprite = makeHpSprite(hp, hp);
-  hpSprite.position.set(0, 5.5, z);
+  hpSprite.position.set(0, 3.5, z);
   scene.add(hpSprite);
 
   return { hp, maxHp: hp, z, mesh, hpSprite, lastHp: hp };
