@@ -642,10 +642,10 @@ function updateCamera() {
   const lookZ = FIELD_LEN / 2 + camPan;
   if (localSide === 'p1') {
     camera.position.set(8, 5, lookZ);
-    camera.lookAt(0, -0.5, lookZ);
+    camera.lookAt(0, 2, lookZ);
   } else {
     camera.position.set(-8, 5, lookZ);
-    camera.lookAt(0, -0.5, lookZ);
+    camera.lookAt(0, 2, lookZ);
   }
 }
 
