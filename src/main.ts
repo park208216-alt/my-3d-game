@@ -434,6 +434,7 @@ let battleActive = false;
 
 let currency = 0;
 let autoCurrencyTimer = 0;
+let stateSyncTimer = 0;
 let round = 1;
 let roundTimer = 0;
 let aiSpawnTimer = 0;
@@ -620,6 +621,7 @@ function startBattle() {
   battleActive = true;
   currency = 0;
   autoCurrencyTimer = 0;
+  stateSyncTimer = 0;
   camPan = 0;
   round = 1;
   roundTimer = ROUND_DURATION;
@@ -826,6 +828,19 @@ socket.on('opponentLeft', () => {
   else $('lobby-status').textContent = '상대방이 나갔습니다';
 });
 
+// Sync both bases: take the lower HP so state converges across clients
+socket.on('opponentState', (payload: { p1BaseHp: number; p2BaseHp: number }) => {
+  if (!battleActive) return;
+  if (p1Base && payload.p1BaseHp < p1Base.hp) p1Base.hp = payload.p1BaseHp;
+  if (p2Base && payload.p2BaseHp < p2Base.hp) p2Base.hp = payload.p2BaseHp;
+});
+
+// Opponent's local game determined a result — mirror it
+socket.on('opponentResult', (payload: { result: 'win' | 'lose' }) => {
+  if (!battleActive) return;
+  endBattle(payload.result === 'win' ? 'lose' : 'win');
+});
+
 // ─── Menu Button Handlers ──────────────────────────────────────────────────────
 $('btn-1p').addEventListener('click', () => {
   gameMode = '1p';
@@ -897,6 +912,14 @@ function animate() {
     checkWinLose();
 
     if (gameMode === '1p') step1PAI(dt);
+
+    if (gameMode === '2p') {
+      stateSyncTimer += dt;
+      if (stateSyncTimer >= 0.5) {
+        stateSyncTimer = 0;
+        socket.emit('battleState', { p1BaseHp: p1Base.hp, p2BaseHp: p2Base.hp });
+      }
+    }
 
     if (quizMsgTimer > 0) {
       quizMsgTimer -= dt;

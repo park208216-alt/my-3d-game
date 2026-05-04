@@ -74,8 +74,17 @@ io.on('connection', (socket) => {
     socket.to(roomCode).emit('opponentSpawn', { animalId: payload?.animalId });
   });
 
+  // Relay base HP snapshot so both clients converge on the same state
+  socket.on('battleState', (payload) => {
+    const roomCode = socketRoom.get(socket.id);
+    if (!roomCode) return;
+    socket.to(roomCode).emit('opponentState', {
+      p1BaseHp: typeof payload?.p1BaseHp === 'number' ? payload.p1BaseHp : 9999,
+      p2BaseHp: typeof payload?.p2BaseHp === 'number' ? payload.p2BaseHp : 9999,
+    });
+  });
+
   socket.on('battleResult', (payload) => {
-    // Could record results here; for now just relay
     const roomCode = socketRoom.get(socket.id);
     if (roomCode) socket.to(roomCode).emit('opponentResult', payload);
   });
