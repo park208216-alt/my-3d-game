@@ -79,7 +79,10 @@ function tintClone(template: THREE.Group, hexColor: number): THREE.Group {
 
 function loadEnvironment() {
   const loader = new GLTFLoader();
-  loader.load(`${tdBase}tower-round-bottom-a.glb`, g => { towerTemplate = g.scene; }, undefined, () => {});
+  loader.load(`${tdBase}tower-round-bottom-a.glb`, g => {
+    towerTemplate = g.scene;
+    if (battleActive) placeBaseTowers(); // 배틀 중 로딩 완료되면 즉시 배치
+  }, undefined, () => {});
   for (const name of ['tree_default', 'tree_cone', 'tree_oak']) {
     loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
   }
@@ -641,6 +644,8 @@ let round = 1;
 let roundTimer = 0;
 let aiSpawnTimer = 0;
 
+let multiplayerTimeLeft = 120;
+
 let currentWord = wordList[0];
 let currentChoices: string[] = [];
 let correctIdx = 0;
@@ -712,6 +717,34 @@ document.body.insertAdjacentHTML('beforeend', `
   <button class="btn primary" id="btn-result-menu">메인 메뉴로</button>
 </div>
 
+<!-- TOP HUD (HP bars + timer) -->
+<div id="top-hud" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(0,0,0,0.80);padding:6px 14px;">
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div style="flex:1;">
+      <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+        <span id="label-p1" style="color:#88aaff;font-weight:700;">🏰 내 기지</span>
+        <span id="hp-p1-text" style="color:#cce;">60/60</span>
+      </div>
+      <div style="height:16px;background:#1a1a2e;border-radius:6px;overflow:hidden;">
+        <div id="bar-p1" style="height:100%;width:100%;background:linear-gradient(90deg,#2255cc,#55aaff);border-radius:6px;transition:width 0.15s;"></div>
+      </div>
+    </div>
+    <div style="text-align:center;min-width:80px;">
+      <div id="top-timer" style="font-size:26px;font-weight:900;color:#fff;line-height:1;font-variant-numeric:tabular-nums;">2:00</div>
+      <div id="top-round" style="font-size:10px;color:#aaa;margin-top:1px;"></div>
+    </div>
+    <div style="flex:1;">
+      <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+        <span id="hp-p2-text" style="color:#fcc;">60/60</span>
+        <span id="label-p2" style="color:#ff8888;font-weight:700;">적 기지 🏰</span>
+      </div>
+      <div style="height:16px;background:#1a1a2e;border-radius:6px;overflow:hidden;position:relative;">
+        <div id="bar-p2" style="height:100%;width:100%;background:linear-gradient(90deg,#ff5555,#cc2222);border-radius:6px;transition:width 0.15s;position:absolute;right:0;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- BATTLE PANEL (bottom 50%) -->
 <div id="panel-battle" style="position:fixed;bottom:0;left:0;right:0;height:50vh;display:none;z-index:10;background:rgba(8,14,30,0.92);border-top:2px solid rgba(255,255,255,0.12);">
   <!-- HUD top bar -->
@@ -758,6 +791,7 @@ function showScreen(s: Screen) {
   $('screen-lobby2p').classList.toggle('hidden', s !== 'lobby2p');
   $('screen-result').classList.toggle('hidden', s !== 'result');
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
+  $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
 }
 showScreen('menu');
@@ -858,6 +892,28 @@ async function startBattle() {
   p2Base = makeBase(FIELD_LEN, 0xff3333, enemyBaseHp);
   placeBaseTowers();
 
+  multiplayerTimeLeft = 120;
+  // 상단 HUD 레이블: 나 vs 적
+  if (localSide === 'p2') {
+    $('label-p1').textContent = '🏰 적 기지';
+    $('label-p1').style.color = '#ff8888';
+    $('label-p2').textContent = '내 기지 🏰';
+    $('label-p2').style.color = '#88aaff';
+    ($('bar-p1') as HTMLElement).style.background = 'linear-gradient(90deg,#ff5555,#cc2222)';
+    ($('bar-p2') as HTMLElement).style.background = 'linear-gradient(90deg,#2255cc,#55aaff)';
+    $('hp-p1-text').style.color = '#fcc';
+    $('hp-p2-text').style.color = '#cce';
+  } else {
+    $('label-p1').textContent = '🏰 내 기지';
+    $('label-p1').style.color = '#88aaff';
+    $('label-p2').textContent = '적 기지 🏰';
+    $('label-p2').style.color = '#ff8888';
+    ($('bar-p1') as HTMLElement).style.background = 'linear-gradient(90deg,#2255cc,#55aaff)';
+    ($('bar-p2') as HTMLElement).style.background = 'linear-gradient(90deg,#ff5555,#cc2222)';
+    $('hp-p1-text').style.color = '#cce';
+    $('hp-p2-text').style.color = '#fcc';
+  }
+
   buildSummonButtons();
   pickNewWord();
   updateHud();
@@ -877,13 +933,35 @@ function updateCamera() {
   }
 }
 
+function fmtTime(sec: number): string {
+  const s = Math.max(0, Math.ceil(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 // ─── HUD ──────────────────────────────────────────────────────────────────────
 function updateHud() {
   $('hud-currency').textContent = `재화: ${currency} / ${CURRENCY_MAX}`;
   updateSummonButtons();
+
+  // Top HUD HP bars
+  if (p1Base && p2Base) {
+    const myBase  = localSide === 'p1' ? p1Base : p2Base;
+    const foeBase = localSide === 'p1' ? p2Base : p1Base;
+    ($('bar-p1') as HTMLElement).style.width  = `${Math.max(0, myBase.hp  / myBase.maxHp  * 100)}%`;
+    ($('bar-p2') as HTMLElement).style.width  = `${Math.max(0, foeBase.hp / foeBase.maxHp * 100)}%`;
+    $('hp-p1-text').textContent = `${Math.ceil(myBase.hp)}/${myBase.maxHp}`;
+    $('hp-p2-text').textContent = `${Math.ceil(foeBase.hp)}/${foeBase.maxHp}`;
+  }
+
+  // Timer & round
   if (gameMode === '1p') {
+    $('top-round').textContent = `라운드 ${round}/${AI_ROUNDS.length}`;
+    $('top-timer').textContent = fmtTime(roundTimer);
     $('hud-round').textContent = `라운드 ${round}/${AI_ROUNDS.length}`;
     $('hud-timer').textContent = `${Math.ceil(roundTimer)}초`;
+  } else {
+    $('top-round').textContent = '2인 대전';
+    $('top-timer').textContent = fmtTime(multiplayerTimeLeft);
   }
   $('hud-base').textContent = `내 기지 ${Math.ceil(p1Base?.hp ?? 0)} / ${p1Base?.maxHp ?? 0}`;
 }
@@ -920,10 +998,9 @@ function checkWinLose() {
   if (p2Base.hp <= 0) { endBattle('win'); return; }
 }
 
-function endBattle(result: 'win' | 'lose') {
+function endBattle(result: 'win' | 'lose' | 'draw') {
   battleActive = false;
-  $('result-text').textContent = result === 'win' ? '🎉 승리!' : '💀 패배...';
-  if (gameMode === '2p') socket.emit('battleResult', { result });
+  $('result-text').textContent = result === 'win' ? '🎉 승리!' : result === 'lose' ? '💀 패배...' : '🤝 무승부!';
   showScreen('result');
 }
 
@@ -1051,11 +1128,12 @@ socket.on('opponentLeft', () => {
 });
 
 // Server sends authoritative game state every 50ms
-socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }>; p1BaseHp: number; p2BaseHp: number }) => {
+socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }>; p1BaseHp: number; p2BaseHp: number; timeLeft?: number }) => {
   if (!battleActive) return;
 
   if (typeof payload.p1BaseHp === 'number') p1Base.hp = payload.p1BaseHp;
   if (typeof payload.p2BaseHp === 'number') p2Base.hp = payload.p2BaseHp;
+  if (typeof payload.timeLeft === 'number') multiplayerTimeLeft = payload.timeLeft;
 
   const serverIds = new Set(payload.units.map(u => u.id));
 
@@ -1076,8 +1154,9 @@ socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; 
 });
 
 // Server determined game result
-socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' }) => {
+socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
   if (!battleActive) return;
+  if (payload.result === 'draw') { endBattle('draw'); return; }
   const iWin = (payload.result === 'p1win' && localSide === 'p1') || (payload.result === 'p2win' && localSide === 'p2');
   endBattle(iWin ? 'win' : 'lose');
 });

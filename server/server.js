@@ -24,7 +24,8 @@ const FIELD_LEN = 45;
 const SPAWN_P1 = 2.5;
 const SPAWN_P2 = FIELD_LEN - 2.5;
 const MOLE_SURFACE_DETECT = 2.5;
-const BASE_HP = 30;
+const BASE_HP = 60;
+const MATCH_DURATION = 120; // 2분
 const TICK_MS = 50;
 
 const ANIMALS = {
@@ -138,24 +139,34 @@ const battleRooms = new Map();
 const socketRoom = new Map();
 
 function startServerGame(roomCode, room) {
-  const gs = { units: [], p1BaseHp: BASE_HP, p2BaseHp: BASE_HP, unitIdCounter: 0, ended: false };
+  const gs = { units: [], p1BaseHp: BASE_HP, p2BaseHp: BASE_HP, unitIdCounter: 0, ended: false, timeLeft: MATCH_DURATION };
   room.gameState = gs;
 
   room.intervalId = setInterval(() => {
     if (gs.ended) return;
+    gs.timeLeft = Math.max(0, gs.timeLeft - TICK_MS / 1000);
     stepGame(gs);
 
     io.to(roomCode).emit('gameState', {
       units: gs.units.map(u => ({ id: u.id, animalId: u.animalId, side: u.side, z: u.z, x: u.x, hp: u.hp, maxHp: u.maxHp, state: u.state })),
       p1BaseHp: gs.p1BaseHp,
       p2BaseHp: gs.p2BaseHp,
+      timeLeft: gs.timeLeft,
     });
 
-    if (gs.p1BaseHp <= 0 || gs.p2BaseHp <= 0) {
+    if (gs.p1BaseHp <= 0 || gs.p2BaseHp <= 0 || gs.timeLeft <= 0) {
       gs.ended = true;
       clearInterval(room.intervalId);
       room.intervalId = null;
-      io.to(roomCode).emit('gameEnd', { result: gs.p1BaseHp <= 0 ? 'p2win' : 'p1win' });
+      let result;
+      if (gs.timeLeft <= 0 && gs.p1BaseHp > 0 && gs.p2BaseHp > 0) {
+        if (gs.p1BaseHp > gs.p2BaseHp) result = 'p1win';
+        else if (gs.p2BaseHp > gs.p1BaseHp) result = 'p2win';
+        else result = 'draw';
+      } else {
+        result = gs.p1BaseHp <= 0 ? 'p2win' : 'p1win';
+      }
+      io.to(roomCode).emit('gameEnd', { result });
     }
   }, TICK_MS);
 }

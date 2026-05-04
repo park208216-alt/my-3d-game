@@ -62,8 +62,8 @@ export const ANIMAL_IDS = ['lion', 'elephant', 'mouse', 'eagle', 'monkey', 'mole
 
 // Base HP = 30 (in same units as atk)
 // 1P enemy base HP = 60
-export const BASE_HP = 30;
-export const BASE_HP_1P_ENEMY = 60;
+export const BASE_HP = 60;
+export const BASE_HP_1P_ENEMY = 120;
 
 // Field constants (shared between client and server)
 export const FIELD_LEN = 45;
