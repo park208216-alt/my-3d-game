@@ -35,7 +35,7 @@ function loadAllModels(): Promise<void> {
                 const mesh = obj as THREE.Mesh;
                 mesh.castShadow = true;
                 const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                mats.forEach(m => { (m as THREE.MeshStandardMaterial).side = THREE.FrontSide; });
+                mats.forEach(m => { (m as THREE.MeshStandardMaterial).side = THREE.DoubleSide; });
               }
             });
             modelTemplates[id] = root;
@@ -261,18 +261,24 @@ function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
   // p2 faces the opposite direction (toward p1 base)
   if (side === 'p2') model.rotation.y = Math.PI;
 
-  // Tint p2 units with a slight blue overlay so they're visually distinct
+  // Tint p2 units blue so they're visually distinct
   if (side === 'p2') {
     model.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh) {
         const mesh = obj as THREE.Mesh;
-        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        mesh.material = mats.map((m) => {
-          const c = (m as THREE.MeshStandardMaterial).clone();
+        if (Array.isArray(mesh.material)) {
+          mesh.material = mesh.material.map((m) => {
+            const c = (m as THREE.MeshStandardMaterial).clone();
+            c.color.multiplyScalar(0.7);
+            c.color.b = Math.min(1, c.color.b + 0.4);
+            return c;
+          });
+        } else {
+          const c = (mesh.material as THREE.MeshStandardMaterial).clone();
           c.color.multiplyScalar(0.7);
           c.color.b = Math.min(1, c.color.b + 0.4);
-          return c;
-        });
+          mesh.material = c;
+        }
       }
     });
   }
@@ -352,11 +358,12 @@ function stepUnits(dt: number) {
   const alive = units.filter(u => u.state !== 'dead');
 
   for (const u of alive) {
+    if (u.state === 'dead') continue; // killed earlier this same frame
     u.atkTimer = Math.max(0, u.atkTimer - dt);
     const def = ANIMALS[u.animalId];
     const dir = u.side === 'p1' ? 1 : -1;
     const targetBase = u.side === 'p1' ? p2Base : p1Base;
-    const enemies = alive.filter(e => e.side !== u.side && e.state !== 'underground');
+    const enemies = alive.filter(e => e.side !== u.side && e.state !== 'underground' && e.state !== 'dead');
 
     if (def.layer === 'underground') {
       stepMole(u, dt, dir, enemies, targetBase);
@@ -432,17 +439,16 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
   const baseDist = Math.abs(base.z - u.z);
 
   if (u.state === 'underground') {
-    // Check for nearby ground enemies or base
     const nearEnemy = groundEnemies.find(e => Math.abs(e.z - u.z) <= MOLE_SURFACE_DETECT);
     if (nearEnemy || baseDist <= def.range) {
       u.state = 'moving'; // surface
-      return;
+    } else {
+      u.z += dir * def.spd * dt;
     }
-    u.z += dir * def.spd * dt;
     return;
   }
 
-  // Surfaced - act like melee ground unit
+  // Surfaced — act like melee ground unit
   const nearest = groundEnemies.reduce<UnitSim | null>((best, e) => {
     const d = Math.abs(e.z - u.z);
     return !best || d < Math.abs(best.z - u.z) ? e : best;
@@ -462,7 +468,13 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
     if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
     return;
   }
-  // No targets nearby - go back underground
+  if (nearest) {
+    // Enemy visible but not yet in range — advance toward it (stay surfaced)
+    u.state = 'moving';
+    u.z += dir * def.spd * dt;
+    return;
+  }
+  // No enemies at all — dive back underground
   u.state = 'underground';
 }
 

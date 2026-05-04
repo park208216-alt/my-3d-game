@@ -32,13 +32,13 @@ export const ANIMALS: Record<string, AnimalDef> = {
     cost: 5, size: 1.0, color: 0x9b9b9b,
   },
   mouse: {
-    id: 'mouse', name: '쥐',
+    id: 'mouse', name: '토끼',
     layer: 'ground', attackLayer: 'ground',
-    hp: 5, atk: 1, spd: 4.0, atkCooldown: 0.3, range: 1.2,
-    cost: 1, size: 0.3, color: 0xd4d4d4,
+    hp: 8, atk: 1, spd: 4.0, atkCooldown: 0.3, range: 1.2,
+    cost: 1, size: 0.4, color: 0xf0e0d0,
   },
   eagle: {
-    id: 'eagle', name: '독수리',
+    id: 'eagle', name: '앵무새',
     layer: 'air', attackLayer: 'both',
     hp: 15, atk: 4, spd: 2.5, atkCooldown: 0.6, range: 2.5,
     cost: 3, size: 0.5, color: 0x4a3728,
@@ -51,7 +51,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
     ranged: true,
   },
   mole: {
-    id: 'mole', name: '두더지',
+    id: 'mole', name: '비버',
     layer: 'underground', attackLayer: 'ground',
     hp: 10, atk: 2, spd: 5.0, atkCooldown: 0.6, range: 1.5,
     cost: 2, size: 0.4, color: 0x7a5c40,
