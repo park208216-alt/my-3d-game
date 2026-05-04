@@ -15,7 +15,7 @@ const MODEL_MAP: Record<string, string> = {
   mole:     'animal-beaver',
 };
 
-const modelTemplates: Record<string, THREE.Group> = {};
+const modelTemplates: Record<string, { scene: THREE.Group; animations: THREE.AnimationClip[] }> = {};
 let modelsReady = false;
 let modelsLoadPromise: Promise<void> | null = null;
 
@@ -38,13 +38,13 @@ function loadAllModels(): Promise<void> {
                 mats.forEach(m => { (m as THREE.MeshStandardMaterial).side = THREE.DoubleSide; });
               }
             });
-            modelTemplates[id] = root;
+            modelTemplates[id] = { scene: root, animations: gltf.animations };
             resolve();
           },
           undefined,
           (err) => {
             console.warn(`Failed to load ${name}.glb:`, err);
-            resolve(); // 실패해도 게임은 시작 (폴백 박스 사용)
+            resolve();
           }
         );
       })
@@ -90,8 +90,10 @@ interface UnitSim {
   atkTimer: number;
   mesh: THREE.Object3D | null;
   hpSprite: THREE.Sprite | null;
-  dustMesh: THREE.Mesh | null; // mole indicator
+  dustMesh: THREE.Mesh | null;
   lastHp: number;
+  mixer: THREE.AnimationMixer | null;
+  currentAnim: string;
 }
 
 interface BaseSim {
@@ -245,7 +247,7 @@ const MODEL_SCALE: Record<string, number> = {
 };
 
 function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
-  const template = modelTemplates[def.id];
+  const template = modelTemplates[def.id]?.scene;
   if (!template) {
     // Fallback box if model not loaded yet
     return new THREE.Mesh(
@@ -324,6 +326,16 @@ function spawnUnit(animalId: string, side: Side): UnitSim {
     scene.add(dustMesh);
   }
 
+  let mixer: THREE.AnimationMixer | null = null;
+  let currentAnim = '';
+  const tmpl = modelTemplates[animalId];
+  if (tmpl && tmpl.animations.length > 0) {
+    mixer = new THREE.AnimationMixer(mesh);
+    const initClip = tmpl.animations.find(c => c.name === 'walk') ?? tmpl.animations[0];
+    mixer.clipAction(initClip).play();
+    currentAnim = initClip.name;
+  }
+
   const unit: UnitSim = {
     id, animalId, side, z, x,
     hp: def.hp, maxHp: def.hp,
@@ -331,6 +343,7 @@ function spawnUnit(animalId: string, side: Side): UnitSim {
     atkTimer: 0,
     mesh, hpSprite, dustMesh,
     lastHp: def.hp,
+    mixer, currentAnim,
   };
   units.push(unit);
   return unit;
@@ -351,6 +364,7 @@ function removeUnitMeshes(unit: UnitSim) {
   }
   if (unit.hpSprite) { scene.remove(unit.hpSprite); const m = unit.hpSprite.material as THREE.SpriteMaterial; if (m.map) m.map.dispose(); m.dispose(); unit.hpSprite = null; }
   if (unit.dustMesh) { scene.remove(unit.dustMesh); unit.dustMesh.geometry.dispose(); (unit.dustMesh.material as THREE.Material).dispose(); unit.dustMesh = null; }
+  if (unit.mixer) { unit.mixer.stopAllAction(); unit.mixer = null; }
 }
 
 // ─── Unit AI ──────────────────────────────────────────────────────────────────
@@ -478,6 +492,25 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
   u.state = 'underground';
 }
 
+// ─── Animation Helper ─────────────────────────────────────────────────────────
+function playAnim(u: UnitSim, name: string) {
+  if (!u.mixer || u.currentAnim === name) return;
+  const tmpl = modelTemplates[u.animalId];
+  if (!tmpl) return;
+  const clip = tmpl.animations.find(c => c.name === name);
+  if (!clip) return;
+  u.mixer.stopAllAction();
+  u.mixer.clipAction(clip).reset().fadeIn(0.15).play();
+  u.currentAnim = name;
+}
+
+const STATE_ANIM: Record<UnitState, string> = {
+  moving: 'walk',
+  attacking: 'eat',
+  underground: 'static',
+  dead: 'static',
+};
+
 // ─── Three.js Unit Sync (after simulation step) ───────────────────────────────
 function syncUnitMeshes() {
   const toRemove: UnitSim[] = [];
@@ -496,6 +529,7 @@ function syncUnitMeshes() {
       u.mesh.position.set(u.x, yPos, u.z);
       u.mesh.visible = !underground;
     }
+    playAnim(u, STATE_ANIM[u.state] ?? 'walk');
     if (u.hpSprite) {
       u.hpSprite.position.set(u.x, yPos + def.size + 0.6, u.z);
       u.hpSprite.visible = !underground;
@@ -712,7 +746,7 @@ function playerSummon(animalId: string) {
   if (currency < cost) return;
   currency -= cost;
   updateHud();
-  spawnUnit(animalId, 'p1');
+  spawnUnit(animalId, localSide);
   if (gameMode === '2p') {
     socket.emit('battleSpawn', { animalId });
   }
@@ -1021,6 +1055,7 @@ function animate() {
 
     stepUnits(dt);
     syncUnitMeshes();
+    for (const u of units) u.mixer?.update(dt);
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
       syncBaseMeshes();
