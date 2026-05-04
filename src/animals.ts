@@ -66,7 +66,7 @@ export const BASE_HP = 30;
 export const BASE_HP_1P_ENEMY = 60;
 
 // Field constants (shared between client and server)
-export const FIELD_LEN = 30;
+export const FIELD_LEN = 45;
 export const SPAWN_P1 = 2.5;
 export const SPAWN_P2 = FIELD_LEN - 2.5;
 export const MOLE_SURFACE_DETECT = 2.5; // mole surfaces if enemy within this Z distance

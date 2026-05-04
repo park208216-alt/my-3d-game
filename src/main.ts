@@ -71,7 +71,7 @@ function resizeRenderer() {
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a2540);
-scene.fog = new THREE.Fog(0x1a2540, 35, 60);
+scene.fog = new THREE.Fog(0x1a2540, 50, 80);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
@@ -98,7 +98,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   camPanStartX = e.clientX;
   // drag right → see more toward p1 base (lower Z); invert for p2
   const dir = localSide === 'p2' ? 1 : -1;
-  camPan = Math.max(-12, Math.min(12, camPan + dir * dx * 0.04));
+  camPan = Math.max(-18, Math.min(18, camPan + dir * dx * 0.04));
 });
 renderer.domElement.addEventListener('pointerup', () => { camPanActive = false; });
 renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; });
