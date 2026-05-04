@@ -111,7 +111,7 @@ function placeBackgroundTrees() {
       const tree = tmpl.clone(true);
       const s = rng(1.6, 2.8);
       tree.scale.set(s, s, s);
-      tree.position.set(side * rng(7, 11), 0, z + rng(-1.5, 1.5));
+      tree.position.set(side * rng(14, 20), 0, z + rng(-1.5, 1.5));
       tree.rotation.y = rng(0, Math.PI * 2);
       (tree as any).__isBgTree = true;
       scene.add(tree);
@@ -303,10 +303,11 @@ function makeBase(z: number, color: number, hp: number): BaseSim {
     new THREE.MeshStandardMaterial({ color, roughness: 0.4 })
   );
   mesh.position.set(0, 1.5, z);
+  mesh.visible = false; // tower GLB is the visual; box is kept only for scene bookkeeping
   scene.add(mesh);
 
   const hpSprite = makeHpSprite(hp, hp);
-  hpSprite.position.set(0, 3.8, z);
+  hpSprite.position.set(0, 5.5, z);
   scene.add(hpSprite);
 
   return { hp, maxHp: hp, z, mesh, hpSprite, lastHp: hp };
@@ -757,16 +758,16 @@ document.body.insertAdjacentHTML('beforeend', `
   <button class="btn primary" id="btn-result-menu">메인 메뉴로</button>
 </div>
 
-<!-- TOP HUD (HP bars + timer) -->
+<!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
 <div id="top-hud" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(0,0,0,0.80);padding:6px 14px;">
   <div style="display:flex;align-items:center;gap:10px;">
     <div style="flex:1;">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
-        <span id="label-p1" style="color:#88aaff;font-weight:700;">🏰 내 기지</span>
-        <span id="hp-p1-text" style="color:#cce;">60/60</span>
+        <span style="color:#ff8888;font-weight:700;">적 기지 🏰</span>
+        <span id="hp-foe-text" style="color:#fcc;">60/60</span>
       </div>
       <div style="height:16px;background:#1a1a2e;border-radius:6px;overflow:hidden;">
-        <div id="bar-p1" style="height:100%;width:100%;background:linear-gradient(90deg,#2255cc,#55aaff);border-radius:6px;transition:width 0.15s;"></div>
+        <div id="bar-foe" style="height:100%;width:100%;background:linear-gradient(90deg,#ff5555,#cc2222);border-radius:6px;transition:width 0.15s;"></div>
       </div>
     </div>
     <div style="text-align:center;min-width:80px;">
@@ -775,11 +776,11 @@ document.body.insertAdjacentHTML('beforeend', `
     </div>
     <div style="flex:1;">
       <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
-        <span id="hp-p2-text" style="color:#fcc;">60/60</span>
-        <span id="label-p2" style="color:#ff8888;font-weight:700;">적 기지 🏰</span>
+        <span id="hp-my-text" style="color:#cce;">60/60</span>
+        <span style="color:#88aaff;font-weight:700;">🏰 내 기지</span>
       </div>
       <div style="height:16px;background:#1a1a2e;border-radius:6px;overflow:hidden;position:relative;">
-        <div id="bar-p2" style="height:100%;width:100%;background:linear-gradient(90deg,#ff5555,#cc2222);border-radius:6px;transition:width 0.15s;position:absolute;right:0;"></div>
+        <div id="bar-my" style="height:100%;width:100%;background:linear-gradient(90deg,#2255cc,#55aaff);border-radius:6px;transition:width 0.15s;position:absolute;right:0;"></div>
       </div>
     </div>
   </div>
@@ -984,26 +985,6 @@ async function startBattle() {
   placeBaseTowers();
 
   multiplayerTimeLeft = 120;
-  // 상단 HUD 레이블: 나 vs 적
-  if (localSide === 'p2') {
-    $('label-p1').textContent = '🏰 적 기지';
-    $('label-p1').style.color = '#ff8888';
-    $('label-p2').textContent = '내 기지 🏰';
-    $('label-p2').style.color = '#88aaff';
-    ($('bar-p1') as HTMLElement).style.background = 'linear-gradient(90deg,#ff5555,#cc2222)';
-    ($('bar-p2') as HTMLElement).style.background = 'linear-gradient(90deg,#2255cc,#55aaff)';
-    $('hp-p1-text').style.color = '#fcc';
-    $('hp-p2-text').style.color = '#cce';
-  } else {
-    $('label-p1').textContent = '🏰 내 기지';
-    $('label-p1').style.color = '#88aaff';
-    $('label-p2').textContent = '적 기지 🏰';
-    $('label-p2').style.color = '#ff8888';
-    ($('bar-p1') as HTMLElement).style.background = 'linear-gradient(90deg,#2255cc,#55aaff)';
-    ($('bar-p2') as HTMLElement).style.background = 'linear-gradient(90deg,#ff5555,#cc2222)';
-    $('hp-p1-text').style.color = '#cce';
-    $('hp-p2-text').style.color = '#fcc';
-  }
 
   buildSummonButtons();
   pickNewWord();
@@ -1035,14 +1016,16 @@ function updateHud() {
   updateSummonButtons();
   updateUpgradeButton();
 
-  // Top HUD HP bars
+  // Top HUD HP bars — my base always on right, foe on left
   if (p1Base && p2Base) {
     const myBase  = localSide === 'p1' ? p1Base : p2Base;
     const foeBase = localSide === 'p1' ? p2Base : p1Base;
-    ($('bar-p1') as HTMLElement).style.width  = `${Math.max(0, myBase.hp  / myBase.maxHp  * 100)}%`;
-    ($('bar-p2') as HTMLElement).style.width  = `${Math.max(0, foeBase.hp / foeBase.maxHp * 100)}%`;
-    $('hp-p1-text').textContent = `${Math.ceil(myBase.hp)}/${myBase.maxHp}`;
-    $('hp-p2-text').textContent = `${Math.ceil(foeBase.hp)}/${foeBase.maxHp}`;
+    ($('bar-my') as HTMLElement).style.width  = `${Math.max(0, myBase.hp  / myBase.maxHp  * 100)}%`;
+    ($('bar-foe') as HTMLElement).style.width = `${Math.max(0, foeBase.hp / foeBase.maxHp * 100)}%`;
+    $('hp-my-text').textContent  = `${Math.ceil(myBase.hp)}/${myBase.maxHp}`;
+    $('hp-foe-text').textContent = `${Math.ceil(foeBase.hp)}/${foeBase.maxHp}`;
+    const myBase2 = myBase;
+    $('hud-base').textContent = `내 기지 ${Math.ceil(myBase2.hp)} / ${myBase2.maxHp}`;
   }
 
   // Timer & round
@@ -1055,7 +1038,6 @@ function updateHud() {
     $('top-round').textContent = '2인 대전';
     $('top-timer').textContent = fmtTime(multiplayerTimeLeft);
   }
-  $('hud-base').textContent = `내 기지 ${Math.ceil(p1Base?.hp ?? 0)} / ${p1Base?.maxHp ?? 0}`;
 }
 
 // ─── 1P AI ───────────────────────────────────────────────────────────────────
@@ -1164,6 +1146,7 @@ function exitTypingMode() {
   e.stopPropagation();
   if (e.code === 'Escape') { exitTypingMode(); return; }
   if (e.code !== 'Enter') return;
+  if (e.isComposing) return; // IME 한글 조합 중 Enter 무시
   const typed = (e.target as HTMLInputElement).value.trim();
   if (!typed) return;
   const correct = currentWord.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
