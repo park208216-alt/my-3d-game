@@ -1338,7 +1338,7 @@ function showScreen(s: Screen) {
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
 }
-showScreen('login');
+showScreen('menu');
 renderer.domElement.style.display = 'none';
 
 // ─── Deck Screen ──────────────────────────────────────────────────────────────
@@ -2079,7 +2079,7 @@ $('btn-logout').addEventListener('click', async () => {
   ($('in-login-id') as HTMLInputElement).value = '';
   ($('in-login-pw') as HTMLInputElement).value = '';
   setError('');
-  showScreen('login');
+  showScreen('menu');
 });
 
 // Restore session on page load
