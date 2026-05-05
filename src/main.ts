@@ -995,12 +995,14 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   }
   const baseDist = Math.abs(base.z - u.z);
 
-  // Tiger leap: once per engagement — instant 5-unit dash + arc when enemy is leapRange+ away
-  if (def.leap && u.isLeaping) return; // mid-arc: position controlled by physics only
-  if (def.leap && !u.leapUsed && closest && closestDist >= (def.leapRange ?? 5)) {
+  // Tiger leap: walks normally; when enemy enters leapRange, pounce to attack range in one arc
+  if (def.leap && u.isLeaping) return; // mid-arc: physics controls position
+  if (def.leap && !u.leapUsed && closest && closestDist <= (def.leapRange ?? 5) && closestDist > def.range) {
     u.leapUsed = true;
     u.isLeaping = true;
-    u.z = Math.max(SPAWN_P1, Math.min(SPAWN_P2, u.z + dir * 5));
+    // Jump to just within attack range
+    const jumpDist = closestDist - def.range;
+    u.z = Math.max(SPAWN_P1, Math.min(SPAWN_P2, u.z + dir * jumpDist));
     if (u.jumpVel !== undefined) u.jumpVel = JUMP_INIT_VEL;
     u.state = 'moving';
     return;
