@@ -523,7 +523,8 @@ interface UnitSim {
   paralyzedUntil?: number;       // timestamp (seconds) when paralysis ends
   paralyzedLabel?: THREE.Sprite | null;
   jumpVel?: number;              // bunny: vertical velocity for gravity jump
-  isLeaping?: boolean;           // tiger: currently leaping
+  isLeaping?: boolean;           // tiger: arc in flight
+  leapUsed?: boolean;            // tiger: one-shot leap already fired
   evadeLabel?: THREE.Sprite | null;
   evadeLabelTimer?: number;
 }
@@ -941,17 +942,14 @@ function stepUnits(dt: number) {
       if (u.mesh) u.mesh.position.y = newY;
     }
 
-    // Tiger leap arc: launch on each new leap, arc decays to ground
-    if (def.leap && u.jumpVel !== undefined) {
-      if (u.isLeaping && u.jumpVel === 0) u.jumpVel = JUMP_INIT_VEL; // trigger arc
-      if (u.jumpVel !== 0) {
-        u.jumpVel += JUMP_GRAVITY * dt;
-        const baseY = def.size;
-        const curY = u.mesh?.position.y ?? baseY;
-        let newY = curY + u.jumpVel * dt;
-        if (newY <= baseY) { newY = baseY; u.jumpVel = 0; }
-        if (u.mesh) u.mesh.position.y = newY;
-      }
+    // Tiger leap arc: physics while isLeaping; clear isLeaping on landing
+    if (def.leap && u.jumpVel !== undefined && u.jumpVel !== 0) {
+      u.jumpVel += JUMP_GRAVITY * dt;
+      const baseY = def.size;
+      const curY = u.mesh?.position.y ?? baseY;
+      let newY = curY + u.jumpVel * dt;
+      if (newY <= baseY) { newY = baseY; u.jumpVel = 0; u.isLeaping = false; }
+      if (u.mesh) u.mesh.position.y = newY;
     }
 
     // Evade label fade-out
@@ -997,15 +995,15 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   }
   const baseDist = Math.abs(base.z - u.z);
 
-  // Tiger leap: when enemy is 5+ units away, dash at 3× speed
-  if (def.leap && closest && closestDist >= (def.leapRange ?? 5)) {
+  // Tiger leap: once per engagement — instant 5-unit dash + arc when enemy is leapRange+ away
+  if (def.leap && u.isLeaping) return; // mid-arc: position controlled by physics only
+  if (def.leap && !u.leapUsed && closest && closestDist >= (def.leapRange ?? 5)) {
+    u.leapUsed = true;
     u.isLeaping = true;
+    u.z = Math.max(SPAWN_P1, Math.min(SPAWN_P2, u.z + dir * 5));
+    if (u.jumpVel !== undefined) u.jumpVel = JUMP_INIT_VEL;
     u.state = 'moving';
-    u.z += dir * def.spd * 3 * dt;
     return;
-  }
-  if (u.isLeaping && closest && closestDist < (def.leapRange ?? 5)) {
-    u.isLeaping = false;
   }
 
   if (def.ranged) {
