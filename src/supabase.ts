@@ -1,10 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL as string;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const url = import.meta.env.VITE_SUPABASE_URL as string ?? '';
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string ?? '';
 
-export const supabase = createClient(url, key);
+if (!url || !key) console.error('[Supabase] env vars missing — login will not work');
 
-// Supabase auth uses email internally; we append a fixed domain so users just type a username
+export const supabase = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder');
+
 const DOMAIN = '@zoobattle.local';
 export const toEmail = (username: string) => `${username}${DOMAIN}`;
