@@ -1598,14 +1598,19 @@ async function startBattle() {
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera(dt = 0) {
   if (camMode === 'top') {
-    // Positioned behind own base, angled down toward enemy — own base visible in foreground
-    const myBase  = localSide === 'p1' ? SPAWN_P1 : SPAWN_P2;
-    const foeBase = localSide === 'p1' ? SPAWN_P2 : SPAWN_P1;
-    const back = localSide === 'p1' ? -14 : 14;
-    camera.position.set(0, 14, myBase + back);
-    camera.lookAt(0, 0, foeBase);
+    // Bird's-eye: straight down over field center, own base at bottom of screen
+    camera.fov = 80;
+    camera.updateProjectionMatrix();
+    camera.up.set(0, 0, localSide === 'p1' ? 1 : -1);
+    const midZ = (SPAWN_P1 + SPAWN_P2) / 2;
+    camera.position.set(0, 36, midZ);
+    camera.lookAt(0, 0, midZ);
     return;
   }
+
+  // Restore side-view camera settings
+  if (camera.fov !== 60) { camera.fov = 60; camera.updateProjectionMatrix(); }
+  if (camera.up.y !== 1) camera.up.set(0, 1, 0);
 
   // Inertia: continue sliding after release, decay with friction
   if (!camPanActive && Math.abs(camPanVel) > 0.01) {
