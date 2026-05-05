@@ -1166,12 +1166,15 @@ document.body.insertAdjacentHTML('beforeend', `
 </div>
 
 <!-- DECK -->
-<div id="screen-deck" class="screen hidden">
-  <h2>전투 덱 (6마리 모두 출전)</h2>
-  <div class="gap" id="deck-cards"></div>
-  <div style="margin-top:24px;" class="gap">
+<div id="screen-deck" class="screen hidden" style="padding:16px;justify-content:flex-start;padding-top:28px;">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;width:100%;max-width:640px;">
+    <h2 style="margin:0;flex:1;">덱 구성</h2>
+    <span id="deck-count" style="font-size:14px;color:#adf;white-space:nowrap;">0 / 6 선택</span>
+  </div>
+  <div id="deck-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;overflow-y:auto;width:100%;max-width:640px;flex:1;align-content:start;padding-bottom:8px;"></div>
+  <div style="margin-top:14px;width:100%;max-width:640px;" class="gap">
     <button class="btn" id="btn-deck-back">← 뒤로</button>
-    <button class="btn primary" id="btn-deck-start">전투 시작 →</button>
+    <button class="btn primary" id="btn-deck-start" disabled style="opacity:0.4;">전투 시작 →</button>
   </div>
 </div>
 
@@ -1281,22 +1284,65 @@ showScreen('menu');
 renderer.domElement.style.display = 'none';
 
 // ─── Deck Screen ──────────────────────────────────────────────────────────────
+const DECK_MAX = 6;
+let playerDeck: string[] = [];
+
 function buildDeckCards() {
   const container = $('deck-cards');
   container.innerHTML = '';
   for (const id of ANIMAL_IDS) {
     const d = ANIMALS[id];
     const card = document.createElement('div');
-    card.className = 'animal-card';
+    card.dataset.id = id;
+    card.style.cssText = [
+      'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,255,255,0.15);',
+      'background:rgba(255,255,255,0.05);text-align:center;font-size:12px;cursor:pointer;',
+      'transition:border-color 0.12s,background 0.12s;user-select:none;',
+    ].join('');
     card.innerHTML = `
-      <div class="aname" style="color:#${d.color.toString(16).padStart(6,'0')}">${d.name}</div>
-      <div class="astat">
+      <div style="font-size:15px;font-weight:700;color:#${d.color.toString(16).padStart(6,'0')};margin-bottom:4px;">${d.name}</div>
+      <div style="opacity:0.75;line-height:1.6;font-size:11px;">
         HP ${d.hp} / ATK ${d.atk}<br>
-        SPD ${d.spd} / 사거리 ${d.range}<br>
-        비용: <b>${d.cost}</b>
+        SPD ${d.spd} / 비용 <b>${d.cost}</b>
       </div>`;
+    card.addEventListener('click', () => toggleDeckCard(id));
     container.appendChild(card);
   }
+  refreshDeckCards();
+}
+
+function toggleDeckCard(id: string) {
+  const idx = playerDeck.indexOf(id);
+  if (idx >= 0) {
+    playerDeck.splice(idx, 1);
+  } else {
+    if (playerDeck.length >= DECK_MAX) return;
+    playerDeck.push(id);
+  }
+  refreshDeckCards();
+}
+
+function refreshDeckCards() {
+  const container = $('deck-cards');
+  const atMax = playerDeck.length >= DECK_MAX;
+  for (const card of Array.from(container.children) as HTMLElement[]) {
+    const id = card.dataset.id!;
+    const selected = playerDeck.includes(id);
+    const dimmed = !selected && atMax;
+    card.style.borderColor = selected ? '#41c1ff' : 'rgba(255,255,255,0.15)';
+    card.style.background = selected
+      ? 'rgba(65,193,255,0.18)'
+      : dimmed
+        ? 'rgba(255,255,255,0.02)'
+        : 'rgba(255,255,255,0.05)';
+    card.style.opacity = dimmed ? '0.35' : '1';
+    card.style.cursor = dimmed ? 'not-allowed' : 'pointer';
+  }
+  $('deck-count').textContent = `${playerDeck.length} / ${DECK_MAX} 선택`;
+  const startBtn = $('btn-deck-start') as HTMLButtonElement;
+  const canStart = playerDeck.length > 0;
+  startBtn.disabled = !canStart;
+  startBtn.style.opacity = canStart ? '1' : '0.4';
 }
 
 // ─── Summon Buttons ───────────────────────────────────────────────────────────
@@ -1306,7 +1352,8 @@ function buildSummonButtons() {
   const grid = $('summon-grid');
   grid.innerHTML = '';
   summonBtns.length = 0;
-  for (const id of ANIMAL_IDS) {
+  const deck = playerDeck.length > 0 ? playerDeck : ANIMAL_IDS.slice(0, DECK_MAX);
+  for (const id of deck) {
     const d = ANIMALS[id];
     const btn = document.createElement('button');
     btn.dataset.id = id;
@@ -1745,19 +1792,28 @@ socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
 $('btn-1p').addEventListener('click', () => {
   gameMode = '1p';
   localSide = 'p1';
+  playerDeck = [];
   buildDeckCards();
   showScreen('deck');
 });
 
 $('btn-2p').addEventListener('click', () => {
   gameMode = '2p';
-  const nick = `Player${Math.floor(Math.random() * 900 + 100)}`;
-  ($('in-nick') as HTMLInputElement).value = nick;
-  showScreen('lobby2p');
+  playerDeck = [];
+  buildDeckCards();
+  showScreen('deck');
 });
 
 $('btn-deck-back').addEventListener('click', () => showScreen('menu'));
-$('btn-deck-start').addEventListener('click', () => startBattle());
+$('btn-deck-start').addEventListener('click', () => {
+  if (gameMode === '2p') {
+    const nick = `Player${Math.floor(Math.random() * 900 + 100)}`;
+    ($('in-nick') as HTMLInputElement).value = nick;
+    showScreen('lobby2p');
+  } else {
+    startBattle();
+  }
+});
 
 $('btn-lobby-back').addEventListener('click', () => {
   socket.disconnect();
