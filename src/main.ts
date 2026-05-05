@@ -524,7 +524,6 @@ interface UnitSim {
   paralyzedLabel?: THREE.Sprite | null;
   jumpVel?: number;              // bunny: vertical velocity for gravity jump
   isLeaping?: boolean;           // tiger: arc in flight
-  leapUsed?: boolean;            // tiger: one-shot leap already fired
   evadeLabel?: THREE.Sprite | null;
   evadeLabelTimer?: number;
 }
@@ -995,14 +994,13 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   }
   const baseDist = Math.abs(base.z - u.z);
 
-  // Tiger leap: walks normally; when enemy enters leapRange, pounce to attack range in one arc
+  // Tiger leap: pounce toward enemy whenever within leapRange and outside attack range
   if (def.leap && u.isLeaping) return; // mid-arc: physics controls position
-  if (def.leap && !u.leapUsed && closest && closestDist <= (def.leapRange ?? 5) && closestDist > def.range) {
-    u.leapUsed = true;
+  if (def.leap && closest && closestDist <= (def.leapRange ?? 5) && closestDist > def.range) {
     u.isLeaping = true;
-    // Jump to just within attack range
+    const toEnemy = Math.sign(closest.z - u.z);
     const jumpDist = closestDist - def.range;
-    u.z = Math.max(SPAWN_P1, Math.min(SPAWN_P2, u.z + dir * jumpDist));
+    u.z = Math.max(SPAWN_P1, Math.min(SPAWN_P2, u.z + toEnemy * jumpDist));
     if (u.jumpVel !== undefined) u.jumpVel = JUMP_INIT_VEL;
     u.state = 'moving';
     return;
