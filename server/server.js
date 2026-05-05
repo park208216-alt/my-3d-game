@@ -20,23 +20,39 @@ const io = new Server(httpServer, {
 });
 
 // ── Game Constants (must match animals.ts) ────────────────────────────────────
-const FIELD_LEN = 45;
-const SPAWN_P1 = 2.5;
-const SPAWN_P2 = FIELD_LEN - 2.5;
+const FIELD_LEN = 67.5;
+const SPAWN_P1 = 4.0;
+const SPAWN_P2 = FIELD_LEN - 4.0;
 const MOLE_SURFACE_DETECT = 2.5;
 const BASE_HP = 60;
 const HP_PER_UPGRADE = 30;
 const UPGRADE_COSTS = [10, 15];
-const MATCH_DURATION = 120; // 2분
+const MATCH_DURATION = 120;
 const TICK_MS = 50;
 
 const ANIMALS = {
-  lion:     { id: 'lion',     layer: 'ground',      attackLayer: 'ground', hp: 25, atk: 10, spd: 1.5, atkCooldown: 1.0,  range: 2.0, size: 0.65 },
-  elephant: { id: 'elephant', layer: 'ground',      attackLayer: 'both',   hp: 50, atk: 6,  spd: 1.0, atkCooldown: 1.5,  range: 3.0, size: 1.0  },
-  mouse:    { id: 'mouse',    layer: 'ground',      attackLayer: 'ground', hp: 8,  atk: 1,  spd: 4.0, atkCooldown: 0.3,  range: 1.2, size: 0.4  },
-  eagle:    { id: 'eagle',    layer: 'air',         attackLayer: 'both',   hp: 15, atk: 4,  spd: 2.5, atkCooldown: 0.6,  range: 2.5, size: 0.5  },
-  monkey:   { id: 'monkey',   layer: 'ground',      attackLayer: 'both',   hp: 20, atk: 2,  spd: 2.0, atkCooldown: 0.75, range: 8.0, size: 0.55, ranged: true },
-  mole:     { id: 'mole',     layer: 'underground', attackLayer: 'ground', hp: 10, atk: 2,  spd: 5.0, atkCooldown: 0.6,  range: 1.5, size: 0.4  },
+  lion:    { id: 'lion',    layer: 'ground',      attackLayer: 'ground', hp: 25, atk: 10, spd: 1.5, atkCooldown: 1.0,  range: 2.0 },
+  elephant:{ id: 'elephant',layer: 'ground',      attackLayer: 'both',   hp: 50, atk: 6,  spd: 1.0, atkCooldown: 1.5,  range: 3.0 },
+  eagle:   { id: 'eagle',   layer: 'air',         attackLayer: 'both',   hp: 15, atk: 4,  spd: 2.5, atkCooldown: 0.6,  range: 2.5 },
+  monkey:  { id: 'monkey',  layer: 'ground',      attackLayer: 'both',   hp: 20, atk: 2,  spd: 2.0, atkCooldown: 0.75, range: 8.0, ranged: true },
+  mole:    { id: 'mole',    layer: 'underground', attackLayer: 'ground', hp: 10, atk: 2,  spd: 5.0, atkCooldown: 0.6,  range: 1.5 },
+  bee:     { id: 'bee',     layer: 'air',         attackLayer: 'both',   hp: 1,  atk: 1,  spd: 10,  atkCooldown: 1.5,  range: 4.0, stinger: true },
+  bunny:   { id: 'bunny',   layer: 'ground',      attackLayer: 'both',   hp: 3,  atk: 2,  spd: 5,   atkCooldown: 0.75, range: 1.0 },
+  cat:     { id: 'cat',     layer: 'ground',      attackLayer: 'ground', hp: 3,  atk: 2,  spd: 6,   atkCooldown: 0.75, range: 2.0, evasion: 0.5 },
+  chick:   { id: 'chick',   layer: 'ground',      attackLayer: 'ground', hp: 1,  atk: 0.1,spd: 7,   atkCooldown: 0.3,  range: 1.0 },
+  cow:     { id: 'cow',     layer: 'ground',      attackLayer: 'ground', hp: 8,  atk: 1,  spd: 2,   atkCooldown: 3.0,  range: 1.0 },
+  crab:    { id: 'crab',    layer: 'ground',      attackLayer: 'ground', hp: 1,  atk: 1,  spd: 2,   atkCooldown: 0.375,range: 1.0 },
+  deer:    { id: 'deer',    layer: 'ground',      attackLayer: 'ground', hp: 4,  atk: 3,  spd: 5,   atkCooldown: 0.6,  range: 1.0 },
+  dog:     { id: 'dog',     layer: 'ground',      attackLayer: 'ground', hp: 3,  atk: 3,  spd: 6,   atkCooldown: 0.75, range: 1.0 },
+  fox:     { id: 'fox',     layer: 'ground',      attackLayer: 'ground', hp: 3,  atk: 2,  spd: 7,   atkCooldown: 1.0,  range: 1.0 },
+  giraffe: { id: 'giraffe', layer: 'ground',      attackLayer: 'both',   hp: 4,  atk: 2,  spd: 7,   atkCooldown: 0.43, range: 2.0 },
+  hog:     { id: 'hog',     layer: 'ground',      attackLayer: 'ground', hp: 4,  atk: 2,  spd: 9,   atkCooldown: 0.3,  range: 1.0 },
+  koala:   { id: 'koala',   layer: 'ground',      attackLayer: 'both',   hp: 2,  atk: 5,  spd: 1,   atkCooldown: 3.0,  range: 3.0, ranged: true },
+  panda:   { id: 'panda',   layer: 'ground',      attackLayer: 'ground', hp: 5,  atk: 3,  spd: 2,   atkCooldown: 1.5,  range: 1.0 },
+  penguin: { id: 'penguin', layer: 'ground',      attackLayer: 'ground', hp: 2,  atk: 1,  spd: 1,   atkCooldown: 0.6,  range: 1.0 },
+  pig:     { id: 'pig',     layer: 'ground',      attackLayer: 'ground', hp: 6,  atk: 1,  spd: 4,   atkCooldown: 1.0,  range: 1.0 },
+  polar:   { id: 'polar',   layer: 'ground',      attackLayer: 'ground', hp: 7,  atk: 6,  spd: 5,   atkCooldown: 0.75, range: 2.0 },
+  tiger:   { id: 'tiger',   layer: 'ground',      attackLayer: 'ground', hp: 7,  atk: 7,  spd: 7,   atkCooldown: 0.43, range: 2.0, leap: true, leapRange: 5 },
 };
 
 // ── Simulation ────────────────────────────────────────────────────────────────
@@ -50,7 +66,27 @@ function applyBaseDamage(gs, attackerSide, atk) {
   else gs.p1BaseHp = Math.max(0, gs.p1BaseHp - atk);
 }
 
-function stepGroundOrAir(u, dt, dir, def, enemies, gs) {
+function dealDamage(attacker, target, atk, gs, now) {
+  const tDef = ANIMALS[target.animalId];
+  // Cat evasion: 50% chance to dodge
+  if (tDef && tDef.evasion && Math.random() < tDef.evasion) return;
+  // Bee stinger: first attack paralyzes
+  const aDef = ANIMALS[attacker.animalId];
+  if (aDef && aDef.stinger && attacker.stingerReady) {
+    attacker.stingerReady = false;
+    target.paralyzedUntil = now + 1.5;
+  }
+  target.hp = Math.max(0, target.hp - atk);
+  if (target.hp <= 0) target.state = 'dead';
+}
+
+function isParalyzed(u, now) {
+  return u.paralyzedUntil && u.paralyzedUntil > now;
+}
+
+function stepGroundOrAir(u, dt, dir, def, enemies, gs, now) {
+  if (isParalyzed(u, now)) { u.state = 'moving'; return; }
+
   const attackable = enemies.filter(e => canAttack(def, ANIMALS[e.animalId]));
   let closest = null, closestDist = Infinity;
   for (const e of attackable) {
@@ -60,10 +96,17 @@ function stepGroundOrAir(u, dt, dir, def, enemies, gs) {
   const baseZ = u.side === 'p1' ? FIELD_LEN : 0;
   const baseDist = Math.abs(baseZ - u.z);
 
+  // Tiger leap: at 5+ distance, move at leap speed
+  if (def.leap && closest && closestDist >= (def.leapRange ?? 5)) {
+    u.state = 'moving';
+    u.z += dir * def.spd * 3 * dt;
+    return;
+  }
+
   if (def.ranged) {
     if (closest && closestDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { closest.hp = Math.max(0, closest.hp - def.atk); u.atkTimer = def.atkCooldown; if (closest.hp <= 0) closest.state = 'dead'; }
+      if (u.atkTimer <= 0) { dealDamage(u, closest, def.atk, gs, now); u.atkTimer = def.atkCooldown; }
       return;
     }
     if (baseDist <= def.range) {
@@ -76,7 +119,7 @@ function stepGroundOrAir(u, dt, dir, def, enemies, gs) {
 
   if (closest && closestDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { closest.hp = Math.max(0, closest.hp - def.atk); u.atkTimer = def.atkCooldown; if (closest.hp <= 0) closest.state = 'dead'; }
+    if (u.atkTimer <= 0) { dealDamage(u, closest, def.atk, gs, now); u.atkTimer = def.atkCooldown; }
     return;
   }
   if (baseDist <= def.range) {
@@ -121,6 +164,8 @@ function stepMole(u, dt, dir, enemies, gs) {
 
 function stepGame(gs) {
   const dt = TICK_MS / 1000;
+  const now = gs.elapsed ?? 0;
+  gs.elapsed = (gs.elapsed ?? 0) + dt;
   const alive = gs.units.filter(u => u.state !== 'dead');
 
   for (const u of alive) {
@@ -130,7 +175,7 @@ function stepGame(gs) {
     const dir = u.side === 'p1' ? 1 : -1;
     const enemies = alive.filter(e => e.side !== u.side && e.state !== 'underground' && e.state !== 'dead');
     if (def.layer === 'underground') stepMole(u, dt, dir, enemies, gs);
-    else stepGroundOrAir(u, dt, dir, def, enemies, gs);
+    else stepGroundOrAir(u, dt, dir, def, enemies, gs, now);
   }
 
   gs.units = gs.units.filter(u => u.state !== 'dead');
@@ -150,7 +195,7 @@ function startServerGame(roomCode, room) {
     stepGame(gs);
 
     io.to(roomCode).emit('gameState', {
-      units: gs.units.map(u => ({ id: u.id, animalId: u.animalId, side: u.side, z: u.z, x: u.x, hp: u.hp, maxHp: u.maxHp, state: u.state })),
+      units: gs.units.map(u => ({ id: u.id, animalId: u.animalId, side: u.side, z: u.z, x: u.x, hp: u.hp, maxHp: u.maxHp, state: u.state, stingerReady: u.stingerReady, paralyzedUntil: u.paralyzedUntil })),
       p1BaseHp: gs.p1BaseHp,
       p2BaseHp: gs.p2BaseHp,
       p1MaxHp: gs.p1MaxHp,
@@ -236,6 +281,7 @@ io.on('connection', (socket) => {
       hp: def.hp, maxHp: def.hp,
       state: def.layer === 'underground' ? 'underground' : 'moving',
       atkTimer: 0,
+      stingerReady: def.stinger ? true : undefined,
     });
   });
 

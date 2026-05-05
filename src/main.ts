@@ -9,10 +9,26 @@ import type { AnimalDef } from './animals';
 const MODEL_MAP: Record<string, string> = {
   lion:     'animal-lion',
   elephant: 'animal-elephant',
-  mouse:    'animal-bunny',
   eagle:    'animal-parrot',
   monkey:   'animal-monkey',
   mole:     'animal-beaver',
+  bee:      'animal-bee',
+  bunny:    'animal-bunny',
+  cat:      'animal-cat',
+  chick:    'animal-chick',
+  cow:      'animal-cow',
+  crab:     'animal-crab',
+  deer:     'animal-deer',
+  dog:      'animal-dog',
+  fox:      'animal-fox',
+  giraffe:  'animal-giraffe',
+  hog:      'animal-hog',
+  koala:    'animal-koala',
+  panda:    'animal-panda',
+  penguin:  'animal-penguin',
+  pig:      'animal-pig',
+  polar:    'animal-polar',
+  tiger:    'animal-tiger',
 };
 
 const modelTemplates: Record<string, { scene: THREE.Group; animations: THREE.AnimationClip[] }> = {};
@@ -150,7 +166,7 @@ function updateTowerVisual(side: Side) {
   const newMesh = tintClone(template);
   // scale: level 0 = 2.0, level 1 = 3.0, level 2 = 4.0 (doubles at max)
   newMesh.scale.setScalar(2.0 * (1 + level * 0.5));
-  newMesh.position.set(0, 0.4, side === 'p1' ? 0 : FIELD_LEN);
+  newMesh.position.set(0, 0.4, side === 'p1' ? 2 : FIELD_LEN - 2);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
     scene.remove(oldMesh);
@@ -181,6 +197,269 @@ let p2TowerLastStage = -1;
 const HP_PER_UPGRADE = 30;   // 2 upgrades × 30 = +60 → max = 2× BASE_HP
 const UPGRADE_COSTS = [10, 15];
 
+// ─── Siege Weapons ────────────────────────────────────────────────────────────
+interface SiegeWeapon {
+  type: 'ballista' | 'catapult';
+  side: Side;
+  z: number;
+  x: number;
+  mesh: THREE.Group | null;
+  atkTimer: number;
+}
+
+interface Projectile {
+  type: 'arrow' | 'boulder';
+  mesh: THREE.Object3D | null;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  damage: number;
+  aoe: number;
+  side: Side;
+  done: boolean;
+}
+
+const SIEGE_COST = 10;
+const BALLISTA_RANGE = 10;
+const CATAPULT_RANGE = 10;
+const BOULDER_GRAVITY = 20;
+const BOULDER_H_SPEED = 9;
+
+let p1Ballista: SiegeWeapon | null = null;
+let p1Catapult: SiegeWeapon | null = null;
+let p2Ballista: SiegeWeapon | null = null;
+let p2Catapult: SiegeWeapon | null = null;
+const projectiles: Projectile[] = [];
+
+const siegeWeaponTemplates: Record<string, THREE.Group | null> = {
+  ballista: null, catapult: null, arrow: null, boulder: null,
+};
+
+function loadSiegeWeapons() {
+  const loader = new GLTFLoader();
+  const files: Record<string, string> = {
+    ballista: 'weapon-ballista',
+    catapult: 'weapon-catapult',
+    arrow:    'weapon-ammo-arrow',
+    boulder:  'weapon-ammo-boulder',
+  };
+  for (const [key, name] of Object.entries(files)) {
+    loader.load(`${tdBase}${name}.glb`, g => {
+      siegeWeaponTemplates[key] = g.scene;
+    }, undefined, () => {});
+  }
+}
+loadSiegeWeapons();
+
+function buySiege(type: 'ballista' | 'catapult') {
+  if (!battleActive) return;
+  const mySiege = localSide === 'p1'
+    ? (type === 'ballista' ? p1Ballista : p1Catapult)
+    : (type === 'ballista' ? p2Ballista : p2Catapult);
+  if (mySiege) return; // already bought
+  if (currency < SIEGE_COST) return;
+  currency -= SIEGE_COST;
+  placeSiege(type, localSide);
+  updateHud();
+  updateSiegeButtons();
+}
+
+function placeSiege(type: 'ballista' | 'catapult', side: Side) {
+  const baseZ = side === 'p1' ? 2 : FIELD_LEN - 2;
+  const xOffset = type === 'ballista' ? 3 : -3;
+  const weapon: SiegeWeapon = { type, side, z: baseZ, x: xOffset, mesh: null, atkTimer: 0 };
+
+  const tmpl = siegeWeaponTemplates[type];
+  if (tmpl) {
+    weapon.mesh = tmpl.clone(true);
+    weapon.mesh.scale.setScalar(1.2);
+    weapon.mesh.position.set(xOffset, 0, baseZ);
+    if (side === 'p2') weapon.mesh.rotation.y = Math.PI;
+    scene.add(weapon.mesh);
+  }
+
+  if (side === 'p1') {
+    if (type === 'ballista') p1Ballista = weapon; else p1Catapult = weapon;
+  } else {
+    if (type === 'ballista') p2Ballista = weapon; else p2Catapult = weapon;
+  }
+}
+
+function stepSiegeWeapons(dt: number) {
+  for (const sw of [p1Ballista, p1Catapult, p2Ballista, p2Catapult]) {
+    if (!sw) continue;
+    sw.atkTimer = Math.max(0, sw.atkTimer - dt);
+    if (sw.atkTimer > 0) continue;
+
+    const enemies = units.filter(e => e.side !== sw.side && e.state !== 'dead' && e.state !== 'underground');
+    const range = sw.type === 'ballista' ? BALLISTA_RANGE : CATAPULT_RANGE;
+    const inRange = enemies.filter(e => Math.abs(e.z - sw.z) <= range);
+    if (inRange.length === 0) continue;
+
+    const target = inRange.reduce((a, b) => {
+      const da = Math.abs(a.z - sw.z);
+      const db = Math.abs(b.z - sw.z);
+      return da < db ? a : b;
+    });
+
+    if (sw.type === 'ballista') {
+      sw.atkTimer = 1.5; // atkCooldown
+      fireArrow(sw, target);
+    } else {
+      sw.atkTimer = 3.0;
+      fireBoulder(sw, target);
+    }
+  }
+}
+
+function fireArrow(sw: SiegeWeapon, target: UnitSim) {
+  const from = new THREE.Vector3(sw.x, 1.5, sw.z);
+  const to = new THREE.Vector3(target.x, target.mesh?.position.y ?? 1, target.z);
+  const dir = to.clone().sub(from).normalize();
+  const speed = 15;
+
+  const tmpl = siegeWeaponTemplates.arrow;
+  let mesh: THREE.Object3D | null = null;
+  if (tmpl) {
+    mesh = tmpl.clone(true);
+    mesh.scale.setScalar(0.5);
+    mesh.position.copy(from);
+    // Rotate arrow to point in movement direction
+    mesh.lookAt(to);
+    scene.add(mesh);
+  }
+
+  projectiles.push({
+    type: 'arrow', mesh, side: sw.side,
+    pos: from.clone(), vel: dir.multiplyScalar(speed),
+    damage: 2, aoe: 0, done: false,
+  });
+}
+
+function fireBoulder(sw: SiegeWeapon, target: UnitSim) {
+  const from = new THREE.Vector3(sw.x, 1.5, sw.z);
+  const to = new THREE.Vector3(target.x, 0, target.z);
+  const horizDist = Math.sqrt((to.x-from.x)**2 + (to.z-from.z)**2);
+  const tFlight = horizDist / BOULDER_H_SPEED;
+  const vy0 = 0.5 * BOULDER_GRAVITY * tFlight;
+
+  const horizDir = new THREE.Vector3(to.x-from.x, 0, to.z-from.z).normalize();
+  const vel = horizDir.multiplyScalar(BOULDER_H_SPEED);
+  vel.y = vy0;
+
+  const tmpl = siegeWeaponTemplates.boulder;
+  let mesh: THREE.Object3D | null = null;
+  if (tmpl) {
+    mesh = tmpl.clone(true);
+    mesh.scale.setScalar(0.5);
+    mesh.position.copy(from);
+    scene.add(mesh);
+  }
+
+  projectiles.push({
+    type: 'boulder', mesh, side: sw.side,
+    pos: from.clone(), vel,
+    damage: 2, aoe: 2.5, done: false,
+  });
+}
+
+function stepProjectiles(dt: number) {
+  for (const p of projectiles) {
+    if (p.done) continue;
+
+    if (p.type === 'boulder') p.vel.y -= BOULDER_GRAVITY * dt;
+    p.pos.addScaledVector(p.vel, dt);
+
+    if (p.mesh) p.mesh.position.copy(p.pos);
+
+    // Arrow: check hit on enemy units
+    if (p.type === 'arrow') {
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && e.state !== 'underground');
+      for (const e of enemies) {
+        const eMesh = e.mesh;
+        const ey = eMesh ? eMesh.position.y : (ANIMALS[e.animalId].layer === 'air' ? AIR_Y : 0);
+        const dist = Math.sqrt((p.pos.x-e.x)**2 + (p.pos.y-ey)**2 + (p.pos.z-e.z)**2);
+        if (dist < ANIMALS[e.animalId].size + 0.3) {
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+          p.done = true;
+          break;
+        }
+      }
+      // Miss if arrow goes too far
+      if (!p.done && Math.abs(p.pos.z - (p.side === 'p1' ? FIELD_LEN : 0)) < 1) p.done = true;
+    }
+
+    // Boulder: hits ground or air unit
+    if (p.type === 'boulder') {
+      // Check air unit hits mid-flight
+      const airEnemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId].layer === 'air');
+      for (const e of airEnemies) {
+        const dist = Math.sqrt((p.pos.x-e.x)**2 + (p.pos.y-AIR_Y)**2 + (p.pos.z-e.z)**2);
+        if (dist < ANIMALS[e.animalId].size + 0.6) {
+          // AoE on nearby air units
+          for (const ae of airEnemies) {
+            const ad = Math.sqrt((ae.x-e.x)**2 + (ae.z-e.z)**2);
+            if (ad <= p.aoe) { ae.hp = Math.max(0, ae.hp - p.damage); if (ae.hp <= 0) ae.state = 'dead'; }
+          }
+          p.done = true; break;
+        }
+      }
+      // Hits ground
+      if (!p.done && p.pos.y <= 0) {
+        p.pos.y = 0;
+        const groundEnemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId].layer !== 'air');
+        for (const ge of groundEnemies) {
+          const gd = Math.sqrt((ge.x-p.pos.x)**2 + (ge.z-p.pos.z)**2);
+          if (gd <= p.aoe) { ge.hp = Math.max(0, ge.hp - p.damage); if (ge.hp <= 0) ge.state = 'dead'; }
+        }
+        p.done = true;
+      }
+    }
+  }
+
+  // Clean up done projectiles
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    if (projectiles[i].done) {
+      const m = projectiles[i].mesh;
+      if (m) scene.remove(m);
+      projectiles.splice(i, 1);
+    }
+  }
+}
+
+function clearSiegeWeapons() {
+  for (const sw of [p1Ballista, p1Catapult, p2Ballista, p2Catapult]) {
+    if (sw?.mesh) scene.remove(sw.mesh);
+  }
+  p1Ballista = null; p1Catapult = null; p2Ballista = null; p2Catapult = null;
+  for (const p of projectiles) { if (p.mesh) scene.remove(p.mesh); }
+  projectiles.length = 0;
+}
+
+function updateSiegeButtons() {
+  const myBallista = localSide === 'p1' ? p1Ballista : p2Ballista;
+  const myCatapult = localSide === 'p1' ? p1Catapult : p2Catapult;
+  const btnB = $('btn-ballista') as HTMLButtonElement;
+  const btnC = $('btn-catapult') as HTMLButtonElement;
+  if (!btnB || !btnC) return;
+  if (myBallista) {
+    btnB.textContent = '발리스타 ✓';
+    btnB.style.opacity = '0.5'; btnB.style.cursor = 'not-allowed';
+  } else {
+    btnB.textContent = `발리스타 (${SIEGE_COST})`;
+    btnB.style.opacity = currency >= SIEGE_COST ? '1' : '0.4';
+    btnB.style.cursor = currency >= SIEGE_COST ? 'pointer' : 'not-allowed';
+  }
+  if (myCatapult) {
+    btnC.textContent = '투석기 ✓';
+    btnC.style.opacity = '0.5'; btnC.style.cursor = 'not-allowed';
+  } else {
+    btnC.textContent = `투석기 (${SIEGE_COST})`;
+    btnC.style.opacity = currency >= SIEGE_COST ? '1' : '0.4';
+    btnC.style.cursor = currency >= SIEGE_COST ? 'pointer' : 'not-allowed';
+  }
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CURRENCY_MAX = 15;
 const CURRENCY_AUTO_INTERVAL = 2; // seconds
@@ -190,11 +469,11 @@ const ROUND_DURATION = 30; // seconds per round
 
 // 1P AI spawn tables per round [animalId, weight]
 const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
-  { interval: 5.0, pool: ['mouse','mouse','mouse','mole'] },
-  { interval: 4.0, pool: ['mouse','mole','lion'] },
-  { interval: 3.5, pool: ['mouse','lion','eagle','monkey'] },
-  { interval: 3.0, pool: ['lion','elephant','eagle','monkey'] },
-  { interval: 2.5, pool: ['lion','elephant','eagle','monkey','mouse','mole'] },
+  { interval: 5.0, pool: ['penguin','chick','crab','mole'] },
+  { interval: 4.0, pool: ['penguin','dog','cat','mole','lion'] },
+  { interval: 3.5, pool: ['dog','lion','eagle','monkey','deer'] },
+  { interval: 3.0, pool: ['lion','elephant','eagle','monkey','polar'] },
+  { interval: 2.5, pool: ['lion','elephant','eagle','monkey','tiger','polar','mole'] },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -219,6 +498,14 @@ interface UnitSim {
   lastHp: number;
   mixer: THREE.AnimationMixer | null;
   currentAnim: string;
+  // Special abilities
+  stingerReady?: boolean;        // bee: true until first attack
+  paralyzedUntil?: number;       // timestamp (seconds) when paralysis ends
+  paralyzedLabel?: THREE.Sprite | null;
+  jumpVel?: number;              // bunny: vertical velocity for gravity jump
+  isLeaping?: boolean;           // tiger: currently leaping
+  evadeLabel?: THREE.Sprite | null;
+  evadeLabelTimer?: number;
 }
 
 interface BaseSim {
@@ -277,7 +564,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   camPanStartX = e.clientX;
   // drag right → see more toward p1 base (lower Z); invert for p2
   const dir = localSide === 'p2' ? 1 : -1;
-  camPan = Math.max(-24, Math.min(24, camPan + dir * dx * 0.04));
+  camPan = Math.max(-30, Math.min(30, camPan + dir * dx * 0.04));
 });
 renderer.domElement.addEventListener('pointerup', () => { camPanActive = false; });
 renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; });
@@ -366,10 +653,54 @@ function refreshHpSprite(sprite: THREE.Sprite, hp: number, maxHp: number) {
   mat.needsUpdate = true;
 }
 
+function refreshHpSpriteUnit(u: UnitSim) {
+  if (!u.hpSprite) return;
+  const def = ANIMALS[u.animalId];
+  const mat = u.hpSprite.material as THREE.SpriteMaterial;
+  if (mat.map) mat.map.dispose();
+  let canvas: HTMLCanvasElement;
+  if (def.stinger) {
+    canvas = drawHpCanvasBee(u.hp, u.maxHp, u.stingerReady ?? false);
+  } else {
+    canvas = drawHpCanvas(u.hp, u.maxHp);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  mat.map = tex;
+  mat.needsUpdate = true;
+}
+
+function drawHpCanvasBee(hp: number, maxHp: number, hasStinger: boolean): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 32;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, 128, 24);
+  const frac = Math.max(0, hp / maxHp);
+  const r = Math.round(255 * (1 - frac));
+  const g = Math.round(255 * frac);
+  ctx.fillStyle = `rgb(${r},${g},0)`;
+  ctx.fillRect(2, 2, Math.round(124 * frac), 20);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${Math.ceil(hp)}`, 64, 12);
+  // Stinger indicator
+  ctx.font = 'bold 10px monospace';
+  ctx.fillStyle = hasStinger ? '#44ff44' : '#ff4444';
+  ctx.textAlign = 'center';
+  ctx.fillText(hasStinger ? 'o' : 'x', 64, 27);
+  return c;
+}
+
 // ─── Unit Mesh Factory ────────────────────────────────────────────────────────
-// Scale factors per animal so they look right at game-unit sizes
 const MODEL_SCALE: Record<string, number> = {
-  lion: 0.9, elephant: 1.2, mouse: 0.55, eagle: 0.7, monkey: 0.75, mole: 0.6,
+  lion: 1.1, elephant: 1.5, eagle: 0.65, monkey: 0.85, mole: 0.75,
+  bee: 0.4, bunny: 0.6, cat: 0.6, chick: 0.38, cow: 1.1,
+  crab: 0.55, deer: 1.05, dog: 0.85, fox: 0.7, giraffe: 1.5,
+  hog: 0.9, koala: 0.8, panda: 0.9, penguin: 0.65, pig: 0.85,
+  polar: 1.1, tiger: 1.2,
 };
 
 function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
@@ -452,13 +783,16 @@ function spawnUnit(animalId: string, side: Side, forcedId?: string): UnitSim {
     scene.add(dustMesh);
   }
 
+  // Hog: animation runs at 3× speed for charge feel
   let mixer: THREE.AnimationMixer | null = null;
   let currentAnim = '';
   const tmpl = modelTemplates[animalId];
   if (tmpl && tmpl.animations.length > 0) {
     mixer = new THREE.AnimationMixer(mesh);
     const initClip = tmpl.animations.find(c => c.name === 'walk') ?? tmpl.animations[0];
-    mixer.clipAction(initClip).play();
+    const action = mixer.clipAction(initClip);
+    if (def.charge) action.setEffectiveTimeScale(3.0);
+    action.play();
     currentAnim = initClip.name;
   }
 
@@ -470,9 +804,29 @@ function spawnUnit(animalId: string, side: Side, forcedId?: string): UnitSim {
     mesh, hpSprite, dustMesh,
     lastHp: def.hp,
     mixer, currentAnim,
+    stingerReady: def.stinger ? true : undefined,
+    jumpVel: def.jumping ? 5 : undefined,
   };
   units.push(unit);
   return unit;
+}
+
+function makeTextSprite(text: string, color = '#ffffff', scale = 1.5): THREE.Sprite {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 32;
+  const ctx = c.getContext('2d')!;
+  ctx.clearRect(0, 0, 128, 32);
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 64, 16);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(scale, scale * 0.28, 1);
+  return sp;
 }
 
 function removeUnitMeshes(unit: UnitSim) {
@@ -491,56 +845,135 @@ function removeUnitMeshes(unit: UnitSim) {
   if (unit.hpSprite) { scene.remove(unit.hpSprite); const m = unit.hpSprite.material as THREE.SpriteMaterial; if (m.map) m.map.dispose(); m.dispose(); unit.hpSprite = null; }
   if (unit.dustMesh) { scene.remove(unit.dustMesh); unit.dustMesh.geometry.dispose(); (unit.dustMesh.material as THREE.Material).dispose(); unit.dustMesh = null; }
   if (unit.mixer) { unit.mixer.stopAllAction(); unit.mixer = null; }
+  if (unit.paralyzedLabel) { scene.remove(unit.paralyzedLabel); unit.paralyzedLabel = null; }
+  if (unit.evadeLabel) { scene.remove(unit.evadeLabel); unit.evadeLabel = null; }
 }
 
 // ─── Unit AI ──────────────────────────────────────────────────────────────────
-function stepUnits(dt: number) {
-  const alive = units.filter(u => u.state !== 'dead');
-
-  for (const u of alive) {
-    if (u.state === 'dead') continue; // killed earlier this same frame
-    u.atkTimer = Math.max(0, u.atkTimer - dt);
-    const def = ANIMALS[u.animalId];
-    const dir = u.side === 'p1' ? 1 : -1;
-    const targetBase = u.side === 'p1' ? p2Base : p1Base;
-    const enemies = alive.filter(e => e.side !== u.side && e.state !== 'underground' && e.state !== 'dead');
-
-    if (def.layer === 'underground') {
-      stepMole(u, dt, dir, enemies, targetBase);
-    } else {
-      stepGroundOrAir(u, dt, dir, def, enemies, targetBase);
-    }
-  }
-}
+const JUMP_GRAVITY = -22;
+const JUMP_INIT_VEL = 6;
 
 function canAttackEnemy(def: AnimalDef, enemyDef: AnimalDef): boolean {
   if (def.attackLayer === 'ground' && enemyDef.layer === 'air') return false;
   return true;
 }
 
-function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, enemies: UnitSim[], base: BaseSim) {
-  const attackable = enemies.filter(e => canAttackEnemy(def, ANIMALS[e.animalId]));
+function dealDamage(attacker: UnitSim, target: UnitSim, atk: number, now: number): boolean {
+  const tDef = ANIMALS[target.animalId];
+  // Cat evasion
+  if (tDef.evasion && Math.random() < tDef.evasion) {
+    showEvadeLabel(target);
+    return false;
+  }
+  // Bee stinger: first attack paralyzes
+  const aDef = ANIMALS[attacker.animalId];
+  if (aDef.stinger && attacker.stingerReady) {
+    attacker.stingerReady = false;
+    target.paralyzedUntil = now + 1.5;
+    refreshBeeStingerLabel(attacker);
+    showParalyzedLabel(target);
+  }
+  target.hp = Math.max(0, target.hp - atk);
+  if (target.hp <= 0) target.state = 'dead';
+  return true;
+}
 
-  // Find closest enemy in range
+function showParalyzedLabel(u: UnitSim) {
+  if (!u.paralyzedLabel) {
+    u.paralyzedLabel = makeTextSprite('paralyzed', '#ff4444', 1.8);
+    scene.add(u.paralyzedLabel);
+  }
+}
+
+function showEvadeLabel(u: UnitSim) {
+  if (u.evadeLabel) scene.remove(u.evadeLabel);
+  u.evadeLabel = makeTextSprite('Evade!', '#44ffaa', 1.6);
+  u.evadeLabelTimer = 0.6;
+  if (u.mesh) u.evadeLabel.position.copy(u.mesh.position).y += u.mesh.position.y + 1.5;
+  scene.add(u.evadeLabel);
+}
+
+function refreshBeeStingerLabel(bee: UnitSim) {
+  // Bee's stinger status shown in HP sprite — force refresh
+  bee.lastHp = -1;
+}
+
+function stepUnits(dt: number) {
+  const now = battleClock;
+  const alive = units.filter(u => u.state !== 'dead');
+
+  for (const u of alive) {
+    if (u.state === 'dead') continue;
+    u.atkTimer = Math.max(0, u.atkTimer - dt);
+
+    // Bunny jump physics
+    const def = ANIMALS[u.animalId];
+    if (def.jumping && u.jumpVel !== undefined) {
+      u.jumpVel += JUMP_GRAVITY * dt;
+      const baseY = def.size;
+      let newY = (u.mesh?.position.y ?? baseY) + u.jumpVel * dt;
+      if (newY <= baseY) { newY = baseY; u.jumpVel = JUMP_INIT_VEL; }
+      if (u.mesh) u.mesh.position.y = newY;
+    }
+
+    // Evade label fade-out
+    if (u.evadeLabel && u.evadeLabelTimer !== undefined) {
+      u.evadeLabelTimer -= dt;
+      const mat = u.evadeLabel.material as THREE.SpriteMaterial;
+      mat.opacity = Math.max(0, u.evadeLabelTimer / 0.6);
+      if (u.evadeLabelTimer <= 0) { scene.remove(u.evadeLabel); u.evadeLabel = null; }
+    }
+
+    // Paralysis: show/hide label
+    if (u.paralyzedUntil) {
+      if (now < u.paralyzedUntil) {
+        showParalyzedLabel(u);
+      } else {
+        if (u.paralyzedLabel) { scene.remove(u.paralyzedLabel); u.paralyzedLabel = null; }
+        u.paralyzedUntil = undefined;
+      }
+    }
+
+    // Skip AI if paralyzed
+    if (u.paralyzedUntil && now < u.paralyzedUntil) continue;
+
+    const dir = u.side === 'p1' ? 1 : -1;
+    const targetBase = u.side === 'p1' ? p2Base : p1Base;
+    const enemies = alive.filter(e => e.side !== u.side && e.state !== 'underground' && e.state !== 'dead');
+
+    if (def.layer === 'underground') {
+      stepMole(u, dt, dir, enemies, targetBase, now);
+    } else {
+      stepGroundOrAir(u, dt, dir, def, enemies, targetBase, now);
+    }
+  }
+}
+
+function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, enemies: UnitSim[], base: BaseSim, now: number) {
+  const attackable = enemies.filter(e => canAttackEnemy(def, ANIMALS[e.animalId]));
   let closest: UnitSim | null = null;
   let closestDist = Infinity;
   for (const e of attackable) {
     const d = Math.abs(e.z - u.z);
     if (d < closestDist) { closestDist = d; closest = e; }
   }
-
   const baseDist = Math.abs(base.z - u.z);
 
+  // Tiger leap: when enemy is 5+ units away, dash at 3× speed
+  if (def.leap && closest && closestDist >= (def.leapRange ?? 5)) {
+    u.isLeaping = true;
+    u.state = 'moving';
+    u.z += dir * def.spd * 3 * dt;
+    return;
+  }
+  if (u.isLeaping && closest && closestDist < (def.leapRange ?? 5)) {
+    u.isLeaping = false;
+  }
+
   if (def.ranged) {
-    // Monkey: attack from range, never advance closer than range
     if (closest && closestDist <= def.range) {
-      // Attack
       u.state = 'attacking';
-      if (u.atkTimer <= 0) {
-        closest.hp = Math.max(0, closest.hp - def.atk);
-        u.atkTimer = def.atkCooldown;
-        if (closest.hp <= 0) closest.state = 'dead';
-      }
+      if (u.atkTimer <= 0) { dealDamage(u, closest, def.atk, now); u.atkTimer = def.atkCooldown; }
       return;
     }
     if (baseDist <= def.range) {
@@ -548,20 +981,12 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
       if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
       return;
     }
-    // Advance
-    u.state = 'moving';
-    u.z += dir * def.spd * dt;
-    return;
+    u.state = 'moving'; u.z += dir * def.spd * dt; return;
   }
 
-  // Melee
   if (closest && closestDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) {
-      closest.hp = Math.max(0, closest.hp - def.atk);
-      u.atkTimer = def.atkCooldown;
-      if (closest.hp <= 0) closest.state = 'dead';
-    }
+    if (u.atkTimer <= 0) { dealDamage(u, closest, def.atk, now); u.atkTimer = def.atkCooldown; }
     return;
   }
   if (baseDist <= def.range) {
@@ -573,22 +998,18 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   u.z += dir * def.spd * dt;
 }
 
-function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base: BaseSim) {
+function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base: BaseSim, now: number) {
   const def = ANIMALS['mole'];
   const groundEnemies = enemies.filter(e => ANIMALS[e.animalId].layer !== 'air');
   const baseDist = Math.abs(base.z - u.z);
 
   if (u.state === 'underground') {
     const nearEnemy = groundEnemies.find(e => Math.abs(e.z - u.z) <= MOLE_SURFACE_DETECT);
-    if (nearEnemy || baseDist <= def.range) {
-      u.state = 'moving'; // surface
-    } else {
-      u.z += dir * def.spd * dt;
-    }
+    if (nearEnemy || baseDist <= def.range) { u.state = 'moving'; }
+    else { u.z += dir * def.spd * dt; }
     return;
   }
 
-  // Surfaced — act like melee ground unit
   const nearest = groundEnemies.reduce<UnitSim | null>((best, e) => {
     const d = Math.abs(e.z - u.z);
     return !best || d < Math.abs(best.z - u.z) ? e : best;
@@ -596,11 +1017,7 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
 
   if (nearest && Math.abs(nearest.z - u.z) <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) {
-      nearest.hp = Math.max(0, nearest.hp - def.atk);
-      u.atkTimer = def.atkCooldown;
-      if (nearest.hp <= 0) nearest.state = 'dead';
-    }
+    if (u.atkTimer <= 0) { dealDamage(u, nearest, def.atk, now); u.atkTimer = def.atkCooldown; }
     return;
   }
   if (baseDist <= def.range) {
@@ -608,13 +1025,7 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
     if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
     return;
   }
-  if (nearest) {
-    // Enemy visible but not yet in range — advance toward it (stay surfaced)
-    u.state = 'moving';
-    u.z += dir * def.spd * dt;
-    return;
-  }
-  // No enemies at all — dive back underground
+  if (nearest) { u.state = 'moving'; u.z += dir * def.spd * dt; return; }
   u.state = 'underground';
 }
 
@@ -652,15 +1063,23 @@ function syncUnitMeshes() {
     const yPos = underground ? -5 : airY;
 
     if (u.mesh) {
-      u.mesh.position.set(u.x, yPos, u.z);
+      // Bunny: Y is controlled by jump physics, only update x/z
+      if (def.jumping) {
+        u.mesh.position.x = u.x;
+        u.mesh.position.z = u.z;
+      } else {
+        u.mesh.position.set(u.x, yPos, u.z);
+      }
       u.mesh.visible = !underground;
     }
     playAnim(u, STATE_ANIM[u.state] ?? 'walk');
+    const meshY = u.mesh ? u.mesh.position.y : yPos;
     if (u.hpSprite) {
-      u.hpSprite.position.set(u.x, yPos + def.size + 0.6, u.z);
+      u.hpSprite.position.set(u.x, meshY + def.size + 0.6, u.z);
       u.hpSprite.visible = !underground;
-      if (u.hp !== u.lastHp) {
-        refreshHpSprite(u.hpSprite, u.hp, u.maxHp);
+      const stingerChanged = def.stinger && u.lastHp === u.hp; // force refresh when stinger fires
+      if (u.hp !== u.lastHp || stingerChanged) {
+        refreshHpSpriteUnit(u);
         u.lastHp = u.hp;
       }
     }
@@ -668,6 +1087,9 @@ function syncUnitMeshes() {
       u.dustMesh.position.set(u.x, 0.05, u.z);
       u.dustMesh.visible = underground;
     }
+    // Paralyzed / evade label positions
+    if (u.paralyzedLabel) u.paralyzedLabel.position.set(u.x, meshY + def.size + 1.3, u.z);
+    if (u.evadeLabel) u.evadeLabel.position.set(u.x, meshY + def.size + 1.3, u.z);
   }
 
   for (const u of toRemove) {
@@ -691,6 +1113,7 @@ function syncBaseMeshes() {
 let gameMode: GameMode = '1p';
 let currentScreen: Screen = 'menu';
 let battleActive = false;
+let battleClock = 0; // elapsed seconds since battle start (for paralysis timing)
 
 let currency = 0;
 let autoCurrencyTimer = 0;
@@ -810,10 +1233,12 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
   <!-- Left: summon buttons -->
   <div id="panel-left" style="position:absolute;top:32px;left:0;width:50%;bottom:0;display:flex;flex-direction:column;padding:8px;gap:6px;">
-    <div id="summon-grid" style="display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:6px;flex:1;"></div>
-    <div style="display:flex;gap:6px;align-items:center;">
-      <button id="btn-upgrade" style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,200,80,0.5);background:rgba(255,200,80,0.12);color:#ffe08a;font-weight:700;cursor:pointer;font-size:11px;">⬆ 기지 업그레이드</button>
-      <span id="upgrade-info" style="font-size:10px;opacity:0.7;white-space:nowrap;min-width:50px;text-align:right;"></span>
+    <div id="summon-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;overflow-y:auto;flex:1;align-content:start;padding-right:2px;"></div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+      <button id="btn-upgrade" style="flex:1;min-width:120px;padding:5px 6px;border-radius:8px;border:1px solid rgba(255,200,80,0.5);background:rgba(255,200,80,0.12);color:#ffe08a;font-weight:700;cursor:pointer;font-size:10px;">⬆ 기지 업그레이드</button>
+      <span id="upgrade-info" style="font-size:10px;opacity:0.7;white-space:nowrap;min-width:40px;text-align:right;"></span>
+      <button id="btn-ballista" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(100,200,255,0.4);background:rgba(100,200,255,0.1);color:#aae4ff;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">발리스타 (10)</button>
+      <button id="btn-catapult" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.1);color:#ffc888;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">투석기 (10)</button>
     </div>
   </div>
   <!-- Right: word quiz -->
@@ -984,14 +1409,18 @@ function playerSummon(animalId: string) {
   currency -= cost;
   updateHud();
   if (gameMode === '1p') {
-    spawnUnit(animalId, localSide);
+    const count = ANIMALS[animalId].groupSpawn ?? 1;
+    for (let i = 0; i < count; i++) spawnUnit(animalId, localSide);
   }
   if (gameMode === '2p') {
-    socket.emit('battleSpawn', { animalId });
+    const count = ANIMALS[animalId].groupSpawn ?? 1;
+    for (let i = 0; i < count; i++) socket.emit('battleSpawn', { animalId });
   }
 }
 
 ($('btn-upgrade') as HTMLButtonElement).addEventListener('click', upgradeBase);
+($('btn-ballista') as HTMLButtonElement).addEventListener('click', () => buySiege('ballista'));
+($('btn-catapult') as HTMLButtonElement).addEventListener('click', () => buySiege('catapult'));
 
 // ─── Battle Init ──────────────────────────────────────────────────────────────
 function clearBattle() {
@@ -1009,6 +1438,7 @@ function clearBattle() {
   p2TowerLastStage = -1;
   p1Team = 'red';
   p2Team = 'violet';
+  clearSiegeWeapons();
 }
 
 async function startBattle() {
@@ -1022,6 +1452,7 @@ async function startBattle() {
   }
   clearBattle();
   battleActive = true;
+  battleClock = 0;
   currency = 0;
   autoCurrencyTimer = 0;
   camPan = 0;
@@ -1040,8 +1471,8 @@ async function startBattle() {
 
   const teamColor = (t: Team) => t === 'red' ? 0xcc2233 : 0x7722bb;
   const enemyBaseHp = gameMode === '1p' ? BASE_HP_1P_ENEMY : BASE_HP;
-  p1Base = makeBase(0, teamColor(p1Team), BASE_HP);
-  p2Base = makeBase(FIELD_LEN, teamColor(p2Team), enemyBaseHp);
+  p1Base = makeBase(2, teamColor(p1Team), BASE_HP);
+  p2Base = makeBase(FIELD_LEN - 2, teamColor(p2Team), enemyBaseHp);
   placeBaseTowers();
 
   multiplayerTimeLeft = 120;
@@ -1078,6 +1509,7 @@ function updateHud() {
   $('hud-currency').textContent = `재화: ${currency} / ${CURRENCY_MAX}`;
   updateSummonButtons();
   updateUpgradeButton();
+  updateSiegeButtons();
 
   // Top HUD HP bars — my base always on right, foe on left
   if (p1Base && p2Base) {
@@ -1363,6 +1795,7 @@ function animate() {
   updateCamera();
 
   if (battleActive) {
+    battleClock += dt;
     autoCurrencyTimer += dt;
     if (autoCurrencyTimer >= CURRENCY_AUTO_INTERVAL) {
       autoCurrencyTimer -= CURRENCY_AUTO_INTERVAL;
@@ -1372,6 +1805,7 @@ function animate() {
     if (gameMode === '1p') stepUnits(dt);
     syncUnitMeshes();
     for (const u of units) u.mixer?.update(dt);
+    if (gameMode === '1p') { stepSiegeWeapons(dt); stepProjectiles(dt); }
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
       syncBaseMeshes();

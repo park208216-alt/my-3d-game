@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python \"C:/Users/KAR/Desktop/my-3d-game/.claude/worktrees/priceless-shirley-babea1/read_xlsx.py\")",
+      "Bash(pip install *)",
+      "Bash(where python *)",
+      "Bash(pip --version)",
+      "Bash(C:/Users/KAR/AppData/Local/Programs/Python/Python312/python.exe -m pip install pandas openpyxl -q)",
+      "Bash(C:/Users/KAR/AppData/Local/Programs/Python/Python312/python.exe -c ' *)",
+      "Bash(C:/Users/KAR/AppData/Local/Programs/Python/Python312/python.exe -m pip install pandas openpyxl)",
+      "Bash(C:/Users/KAR/AppData/Local/Programs/Python/Python312/python.exe -c \"import pandas; print\\('ok'\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\KAR\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe\" -m pip install openpyxl 2>&1)",
+      "PowerShell(python -m pip install openpyxl; $exitCode = $LASTEXITCODE; Write-Host \"Exit: $exitCode\")",
+      "Bash(npm install *)",
+      "Bash(node -e ' *)",
+      "Bash(npm run *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(unzip -o kenney_cube-pets_1.0.zip -d kenney_cube-pets)",
+      "Bash(cp \"C:/Users/KAR/Desktop/my-3d-game/public/kenney_cube-pets/Models/GLB format/animal-lion.glb\" \"C:/Users/KAR/Desktop/my-3d-game/.claude/worktrees/priceless-shirley-babea1/public/assets/animals/\")",
+      "Bash(cp \"C:/Users/KAR/Desktop/my-3d-game/public/kenney_cube-pets/Models/GLB format/animal-elephant.glb\" \"C:/Users/KAR/Desktop/my-3d-game/.claude/worktrees/priceless-shirley-babea1/public/assets/animals/\")",
+      "Bash(cp \"C:/Users/KAR/Desktop/my-3d-game/public/kenney_cube-pets/Models/GLB format/animal-bunny.glb\" \"C:/Users/KAR/Desktop/my-3d-game/.claude/worktrees/priceless-shirley-babea1/public/assets/animals/\")",
+      "Bash(cp \"C:/Users/KAR/Desktop/my-3d-game/public/kenney_cube-pets/Models/GLB format/animal-parrot.glb\" \"C:/Users/KAR/Desktop/my-3d-game/.claude/worktrees/priceless-shirley-babea1/public/assets/animals/\")",
+      "Bash(cp \"C:/Users/KAR/Desktop/my-3d-game/public/kenney_cube-pets/Models/GLB format/animal-monkey.glb\" \"C:/Users/KAR/Desktop/my-3d-game/.claude/worktrees/priceless-shirley-babea1/public/assets/animals/\")",
+      "Bash(git remote *)",
+      "Bash(npx vite *)",
+      "Bash(git commit *)",
+      "Bash(npx tsc *)",
+      "Bash(unzip -o kenney_nature-kit.zip -d kenney_nature-kit)",
+      "Bash(unzip -o kenney_tower-defense-kit.zip -d kenney_tower-defense-kit)",
+      "Bash(git fetch *)",
+      "Bash(git rebase *)"
+    ]
+  }
+}
