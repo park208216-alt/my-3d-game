@@ -577,6 +577,8 @@ let camPanVel = 0;       // inertia velocity (units/sec)
 let camPanStartX = 0;
 let camPanActive = false;
 let camPanLastDelta = 0; // last frame's pan delta for inertia kick
+type CamMode = 'side' | 'top';
+let camMode: CamMode = 'side';
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   camPanActive = true;
@@ -1150,7 +1152,7 @@ function syncBaseMeshes() {
 
 // ─── Game State ───────────────────────────────────────────────────────────────
 let gameMode: GameMode = '1p';
-let currentScreen: Screen = 'login';
+let currentScreen: Screen = 'menu'; // TODO: restore 'login' after testing
 let battleActive = false;
 let battleClock = 0; // elapsed seconds since battle start (for paralysis timing)
 
@@ -1287,6 +1289,7 @@ document.body.insertAdjacentHTML('beforeend', `
     <span id="hud-round" style="color:#adf;"></span>
     <span id="hud-timer" style="color:#fda;"></span>
     <span id="hud-base" style="color:#fca;margin-left:auto;"></span>
+    <button id="btn-cammode" style="padding:2px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.08);color:#e8eefc;font-size:11px;cursor:pointer;">👁 시점</button>
   </div>
   <!-- Left: summon buttons -->
   <div id="panel-left" style="position:absolute;top:32px;left:0;width:50%;bottom:0;display:flex;flex-direction:column;padding:8px;gap:6px;">
@@ -1522,6 +1525,11 @@ function playerSummon(animalId: string) {
 ($('btn-ballista') as HTMLButtonElement).addEventListener('click', () => buySiege('ballista'));
 ($('btn-catapult') as HTMLButtonElement).addEventListener('click', () => buySiege('catapult'));
 
+$('btn-cammode').addEventListener('click', () => {
+  camMode = camMode === 'side' ? 'top' : 'side';
+  ($('btn-cammode') as HTMLButtonElement).textContent = camMode === 'top' ? '👁 측면' : '👁 시점';
+});
+
 // ─── Battle Init ──────────────────────────────────────────────────────────────
 function clearBattle() {
   for (const u of [...units]) removeUnitMeshes(u);
@@ -1556,6 +1564,8 @@ async function startBattle() {
   currency = 0;
   autoCurrencyTimer = 0;
   camPan = 0;
+  camMode = 'side';
+  ($('btn-cammode') as HTMLButtonElement).textContent = '👁 시점';
   round = 1;
   roundTimer = ROUND_DURATION;
   aiSpawnTimer = AI_ROUNDS[0].interval;
@@ -1587,6 +1597,15 @@ async function startBattle() {
 
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera(dt = 0) {
+  if (camMode === 'top') {
+    // Overhead view: hover above own base, look toward enemy base
+    const myBase  = localSide === 'p1' ? SPAWN_P1 : SPAWN_P2;
+    const foeBase = localSide === 'p1' ? SPAWN_P2 : SPAWN_P1;
+    camera.position.set(0, 18, myBase);
+    camera.lookAt(0, 0, foeBase);
+    return;
+  }
+
   // Inertia: continue sliding after release, decay with friction
   if (!camPanActive && Math.abs(camPanVel) > 0.01) {
     camPan = Math.max(-30, Math.min(30, camPan + camPanVel * dt));
