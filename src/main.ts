@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y, MOLE_SURFACE_DETECT } from './animals';
 import type { AnimalDef } from './animals';
+import { supabase, toEmail } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
 const MODEL_MAP: Record<string, string> = {
@@ -498,7 +499,8 @@ const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type GameMode = '1p' | '2p';
-type Screen = 'menu' | 'deck' | 'lobby2p' | 'battle' | 'result';
+type Screen = 'login' | 'menu' | 'deck' | 'lobby2p' | 'battle' | 'result';
+let loggedInUsername = '';
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
 
@@ -1148,7 +1150,7 @@ function syncBaseMeshes() {
 
 // ─── Game State ───────────────────────────────────────────────────────────────
 let gameMode: GameMode = '1p';
-let currentScreen: Screen = 'menu';
+let currentScreen: Screen = 'login';
 let battleActive = false;
 let battleClock = 0; // elapsed seconds since battle start (for paralysis timing)
 
@@ -1194,12 +1196,27 @@ document.body.insertAdjacentHTML('beforeend', `
 </style>
 
 <!-- MENU -->
-<div id="screen-menu" class="screen">
+<!-- LOGIN -->
+<div id="screen-login" class="screen">
+  <h1 style="margin-bottom:24px;">Zoo Battle</h1>
+  <div style="width:100%;max-width:320px;display:flex;flex-direction:column;gap:10px;">
+    <input class="field" id="in-login-id" placeholder="아이디" autocomplete="username" style="font-size:15px;">
+    <input class="field" id="in-login-pw" type="password" placeholder="비밀번호" autocomplete="current-password" style="font-size:15px;">
+    <div id="login-error" style="color:#ff7070;font-size:13px;min-height:18px;text-align:center;"></div>
+    <button class="btn primary" id="btn-login" style="margin-top:4px;">로그인</button>
+    <button class="btn" id="btn-signup">회원가입</button>
+  </div>
+</div>
+
+<!-- MENU -->
+<div id="screen-menu" class="screen hidden">
   <h1>Zoo Battle</h1>
+  <div style="font-size:13px;color:#adf;margin-bottom:8px;" id="menu-username"></div>
   <div class="gap">
     <button class="btn primary" id="btn-1p">1인용</button>
     <button class="btn" id="btn-2p">2인용 (온라인)</button>
   </div>
+  <button class="btn" id="btn-logout" style="margin-top:16px;opacity:0.6;font-size:12px;">로그아웃</button>
 </div>
 
 <!-- DECK -->
@@ -1309,6 +1326,7 @@ function showLoadingOverlay(show: boolean) {
 // ─── Screen Manager ───────────────────────────────────────────────────────────
 function showScreen(s: Screen) {
   currentScreen = s;
+  $('screen-login').classList.toggle('hidden', s !== 'login');
   $('screen-menu').classList.toggle('hidden', s !== 'menu');
   $('screen-deck').classList.toggle('hidden', s !== 'deck');
   $('screen-lobby2p').classList.toggle('hidden', s !== 'lobby2p');
@@ -1317,7 +1335,7 @@ function showScreen(s: Screen) {
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
 }
-showScreen('menu');
+showScreen('login');
 renderer.domElement.style.display = 'none';
 
 // ─── Deck Screen ──────────────────────────────────────────────────────────────
@@ -1992,5 +2010,68 @@ function animate() {
 
   renderer.render(scene, camera);
 }
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+function setError(msg: string) { $('login-error').textContent = msg; }
+
+async function handleLogin() {
+  const id = ($('in-login-id') as HTMLInputElement).value.trim();
+  const pw = ($('in-login-pw') as HTMLInputElement).value;
+  if (!id || !pw) { setError('아이디와 비밀번호를 입력하세요'); return; }
+  setError('');
+  ($('btn-login') as HTMLButtonElement).disabled = true;
+  const { error } = await supabase.auth.signInWithPassword({ email: toEmail(id), password: pw });
+  ($('btn-login') as HTMLButtonElement).disabled = false;
+  if (error) { setError('아이디 또는 비밀번호가 틀렸습니다'); return; }
+  loggedInUsername = id;
+  ($('menu-username') as HTMLElement).textContent = `${id} 님`;
+  ($('in-nick') as HTMLInputElement).value = id;
+  showScreen('menu');
+}
+
+async function handleSignup() {
+  const id = ($('in-login-id') as HTMLInputElement).value.trim();
+  const pw = ($('in-login-pw') as HTMLInputElement).value;
+  if (!id || !pw) { setError('아이디와 비밀번호를 입력하세요'); return; }
+  if (pw.length < 6) { setError('비밀번호는 6자 이상이어야 합니다'); return; }
+  setError('');
+  ($('btn-signup') as HTMLButtonElement).disabled = true;
+  const { error } = await supabase.auth.signUp({ email: toEmail(id), password: pw });
+  ($('btn-signup') as HTMLButtonElement).disabled = false;
+  if (error) {
+    setError(error.message.includes('already') ? '이미 사용 중인 아이디입니다' : error.message);
+    return;
+  }
+  loggedInUsername = id;
+  ($('menu-username') as HTMLElement).textContent = `${id} 님`;
+  ($('in-nick') as HTMLInputElement).value = id;
+  showScreen('menu');
+}
+
+$('btn-login').addEventListener('click', handleLogin);
+$('btn-signup').addEventListener('click', handleSignup);
+($('in-login-pw') as HTMLInputElement).addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') handleLogin();
+});
+
+$('btn-logout').addEventListener('click', async () => {
+  await supabase.auth.signOut();
+  loggedInUsername = '';
+  ($('in-login-id') as HTMLInputElement).value = '';
+  ($('in-login-pw') as HTMLInputElement).value = '';
+  setError('');
+  showScreen('login');
+});
+
+// Restore session on page load
+supabase.auth.getSession().then(({ data }) => {
+  const user = data.session?.user;
+  if (user?.email) {
+    loggedInUsername = user.email.replace('@zoobattle.local', '');
+    ($('menu-username') as HTMLElement).textContent = `${loggedInUsername} 님`;
+    ($('in-nick') as HTMLInputElement).value = loggedInUsername;
+    showScreen('menu');
+  }
+});
 
 animate();
