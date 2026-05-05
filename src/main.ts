@@ -1598,10 +1598,11 @@ async function startBattle() {
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera(dt = 0) {
   if (camMode === 'top') {
-    // Overhead view: hover above own base, look toward enemy base
+    // Positioned behind own base, angled down toward enemy — own base visible in foreground
     const myBase  = localSide === 'p1' ? SPAWN_P1 : SPAWN_P2;
     const foeBase = localSide === 'p1' ? SPAWN_P2 : SPAWN_P1;
-    camera.position.set(0, 18, myBase);
+    const back = localSide === 'p1' ? -14 : 14;
+    camera.position.set(0, 14, myBase + back);
     camera.lookAt(0, 0, foeBase);
     return;
   }
