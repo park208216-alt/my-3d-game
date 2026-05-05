@@ -255,12 +255,32 @@ function buySiege(type: 'ballista' | 'catapult') {
   const mySiege = localSide === 'p1'
     ? (type === 'ballista' ? p1Ballista : p1Catapult)
     : (type === 'ballista' ? p2Ballista : p2Catapult);
-  if (mySiege) return; // already bought
+  if (mySiege) return;
   if (currency < SIEGE_COST) return;
   currency -= SIEGE_COST;
-  placeSiege(type, localSide);
+  if (gameMode === '1p') {
+    placeSiege(type, localSide);
+  } else {
+    socket.emit('battleSiege', { type }); // server places and validates
+  }
   updateHud();
   updateSiegeButtons();
+}
+
+function syncSiegeMeshes(state: Record<string, { x: number; z: number } | null>) {
+  const entries: Array<[string, Side, 'ballista' | 'catapult']> = [
+    ['p1Ballista', 'p1', 'ballista'],
+    ['p1Catapult', 'p1', 'catapult'],
+    ['p2Ballista', 'p2', 'ballista'],
+    ['p2Catapult', 'p2', 'catapult'],
+  ];
+  for (const [key, side, type] of entries) {
+    const data = state[key];
+    const sw = side === 'p1'
+      ? (type === 'ballista' ? p1Ballista : p1Catapult)
+      : (type === 'ballista' ? p2Ballista : p2Catapult);
+    if (data && !sw) placeSiege(type, side);
+  }
 }
 
 function placeSiege(type: 'ballista' | 'catapult', side: Side) {
@@ -1458,10 +1478,8 @@ function playerSummon(animalId: string) {
   if (gameMode === '1p') {
     const count = ANIMALS[animalId].groupSpawn ?? 1;
     for (let i = 0; i < count; i++) spawnUnit(animalId, localSide);
-  }
-  if (gameMode === '2p') {
-    const count = ANIMALS[animalId].groupSpawn ?? 1;
-    for (let i = 0; i < count; i++) socket.emit('battleSpawn', { animalId });
+  } else {
+    socket.emit('battleSpawn', { animalId }); // single emit — server handles groupSpawn
   }
 }
 
@@ -1713,6 +1731,9 @@ function showQuizMsg(msg: string) {
 function addCurrency(amt: number) {
   currency = Math.max(0, Math.min(CURRENCY_MAX, currency + amt));
   updateHud();
+  if (gameMode === '2p' && amt > 0 && battleActive) {
+    socket.emit('currencyEarn', { amount: amt });
+  }
 }
 
 // Keyboard shortcuts for quiz
@@ -1747,7 +1768,13 @@ socket.on('opponentLeft', () => {
 });
 
 // Server sends authoritative game state every 50ms
-socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState }>; p1BaseHp: number; p2BaseHp: number; p1MaxHp?: number; p2MaxHp?: number; p1UpgradeLevel?: number; p2UpgradeLevel?: number; timeLeft?: number }) => {
+socket.on('gameState', (payload: {
+  units: Array<{ id: string; animalId: string; side: Side; z: number; x: number; hp: number; maxHp: number; state: UnitState; stingerReady?: boolean; paralyzedUntil?: number }>;
+  p1BaseHp: number; p2BaseHp: number; p1MaxHp?: number; p2MaxHp?: number;
+  p1UpgradeLevel?: number; p2UpgradeLevel?: number; timeLeft?: number;
+  p1Currency?: number; p2Currency?: number;
+  siegeState?: Record<string, { x: number; z: number } | null>;
+}) => {
   if (!battleActive) return;
 
   if (typeof payload.p1BaseHp === 'number') p1Base.hp = payload.p1BaseHp;
@@ -1762,6 +1789,13 @@ socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; 
   }
   if (typeof payload.timeLeft === 'number') multiplayerTimeLeft = payload.timeLeft;
 
+  // Sync currency from server
+  const serverCurrency = localSide === 'p1' ? payload.p1Currency : payload.p2Currency;
+  if (typeof serverCurrency === 'number') currency = serverCurrency;
+
+  // Sync siege weapon meshes
+  if (payload.siegeState) syncSiegeMeshes(payload.siegeState);
+
   const serverIds = new Set(payload.units.map(u => u.id));
 
   for (const su of payload.units) {
@@ -1769,14 +1803,56 @@ socket.on('gameState', (payload: { units: Array<{ id: string; animalId: string; 
     if (existing) {
       existing.z = su.z; existing.x = su.x;
       existing.hp = su.hp; existing.state = su.state;
+      // Fix 2: sync special ability states
+      if (su.stingerReady !== undefined) existing.stingerReady = su.stingerReady;
+      if (su.paralyzedUntil !== undefined) existing.paralyzedUntil = su.paralyzedUntil;
     } else {
       const u = spawnUnit(su.animalId, su.side, su.id);
       u.z = su.z; u.x = su.x; u.hp = su.hp; u.maxHp = su.maxHp; u.state = su.state;
+      if (su.stingerReady !== undefined) u.stingerReady = su.stingerReady;
+      if (su.paralyzedUntil !== undefined) u.paralyzedUntil = su.paralyzedUntil;
     }
   }
 
   for (const u of units) {
     if (!serverIds.has(u.id)) u.state = 'dead';
+  }
+});
+
+// Visual-only projectile fired by server siege weapon
+socket.on('siegeFire', (payload: { type: 'ballista' | 'catapult'; side: Side; from: { x: number; z: number }; to: { x: number; z: number } }) => {
+  if (!battleActive) return;
+  const from = new THREE.Vector3(payload.from.x, 1.5, payload.from.z);
+  const to = new THREE.Vector3(payload.to.x, payload.type === 'ballista' ? 1 : 0, payload.to.z);
+
+  if (payload.type === 'ballista') {
+    const dir = to.clone().sub(from).normalize();
+    const tmpl = siegeWeaponTemplates.arrow;
+    let mesh: THREE.Object3D | null = null;
+    if (tmpl) {
+      mesh = tmpl.clone(true);
+      mesh.scale.setScalar(0.5);
+      mesh.position.copy(from);
+      mesh.lookAt(to);
+      scene.add(mesh);
+    }
+    projectiles.push({ type: 'arrow', mesh, side: payload.side, pos: from.clone(), vel: dir.multiplyScalar(15), damage: 0, aoe: 0, done: false });
+  } else {
+    const horizDist = Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2);
+    const tFlight = horizDist / BOULDER_H_SPEED;
+    const vy0 = 0.5 * BOULDER_GRAVITY * tFlight;
+    const horizDir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
+    const vel = horizDir.multiplyScalar(BOULDER_H_SPEED);
+    vel.y = vy0;
+    const tmpl = siegeWeaponTemplates.boulder;
+    let mesh: THREE.Object3D | null = null;
+    if (tmpl) {
+      mesh = tmpl.clone(true);
+      mesh.scale.setScalar(0.5);
+      mesh.position.copy(from);
+      scene.add(mesh);
+    }
+    projectiles.push({ type: 'boulder', mesh, side: payload.side, pos: from.clone(), vel, damage: 0, aoe: 0, done: false });
   }
 });
 
@@ -1861,7 +1937,8 @@ function animate() {
     if (gameMode === '1p') stepUnits(dt);
     syncUnitMeshes();
     for (const u of units) u.mixer?.update(dt);
-    if (gameMode === '1p') { stepSiegeWeapons(dt); stepProjectiles(dt); }
+    if (gameMode === '1p') stepSiegeWeapons(dt);
+    stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
       syncBaseMeshes();
