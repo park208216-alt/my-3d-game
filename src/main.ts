@@ -291,7 +291,7 @@ function placeSiege(type: 'ballista' | 'catapult', side: Side) {
   const tmpl = siegeWeaponTemplates[type];
   if (tmpl) {
     weapon.mesh = tmpl.clone(true);
-    weapon.mesh.scale.setScalar(1.2);
+    weapon.mesh.scale.setScalar(6.0);
     weapon.mesh.position.set(xOffset, 0, baseZ);
     if (side === 'p2') weapon.mesh.rotation.y = Math.PI;
     scene.add(weapon.mesh);
@@ -570,9 +570,11 @@ sun.position.set(5, 12, -5);
 scene.add(sun);
 
 // ─── Camera Pan ───────────────────────────────────────────────────────────────
-let camPan = 0; // Z-axis offset for side-view panning
+let camPan = 0;
+let camPanVel = 0;       // inertia velocity (units/sec)
 let camPanStartX = 0;
 let camPanActive = false;
+let camPanLastDelta = 0; // last frame's pan delta for inertia kick
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   camPanActive = true;
@@ -582,12 +584,15 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   if (!camPanActive) return;
   const dx = e.clientX - camPanStartX;
   camPanStartX = e.clientX;
-  // drag right → see more toward p1 base (lower Z); invert for p2
   const dir = localSide === 'p2' ? 1 : -1;
-  camPan = Math.max(-30, Math.min(30, camPan + dir * dx * 0.04));
+  camPanLastDelta = dir * dx * 0.05;
+  camPan = Math.max(-30, Math.min(30, camPan + camPanLastDelta));
 });
-renderer.domElement.addEventListener('pointerup', () => { camPanActive = false; });
-renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; });
+renderer.domElement.addEventListener('pointerup', () => {
+  camPanActive = false;
+  camPanVel = camPanLastDelta * 60; // convert last-frame delta to per-second velocity
+});
+renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; camPanVel = 0; });
 
 // ─── Field Geometry ───────────────────────────────────────────────────────────
 function buildField() {
@@ -825,7 +830,7 @@ function spawnUnit(animalId: string, side: Side, forcedId?: string): UnitSim {
     lastHp: def.hp,
     mixer, currentAnim,
     stingerReady: def.stinger ? true : undefined,
-    jumpVel: def.jumping ? 5 : undefined,
+    jumpVel: def.jumping ? 5 : (def.leap ? 0 : undefined),
   };
   units.push(unit);
   return unit;
@@ -926,7 +931,7 @@ function stepUnits(dt: number) {
     if (u.state === 'dead') continue;
     u.atkTimer = Math.max(0, u.atkTimer - dt);
 
-    // Bunny jump physics
+    // Bunny: continuous gravity bounce
     const def = ANIMALS[u.animalId];
     if (def.jumping && u.jumpVel !== undefined) {
       u.jumpVel += JUMP_GRAVITY * dt;
@@ -934,6 +939,19 @@ function stepUnits(dt: number) {
       let newY = (u.mesh?.position.y ?? baseY) + u.jumpVel * dt;
       if (newY <= baseY) { newY = baseY; u.jumpVel = JUMP_INIT_VEL; }
       if (u.mesh) u.mesh.position.y = newY;
+    }
+
+    // Tiger leap arc: launch on each new leap, arc decays to ground
+    if (def.leap && u.jumpVel !== undefined) {
+      if (u.isLeaping && u.jumpVel === 0) u.jumpVel = JUMP_INIT_VEL; // trigger arc
+      if (u.jumpVel !== 0) {
+        u.jumpVel += JUMP_GRAVITY * dt;
+        const baseY = def.size;
+        const curY = u.mesh?.position.y ?? baseY;
+        let newY = curY + u.jumpVel * dt;
+        if (newY <= baseY) { newY = baseY; u.jumpVel = 0; }
+        if (u.mesh) u.mesh.position.y = newY;
+      }
     }
 
     // Evade label fade-out
@@ -1083,8 +1101,9 @@ function syncUnitMeshes() {
     const yPos = underground ? -5 : airY;
 
     if (u.mesh) {
-      // Bunny: Y is controlled by jump physics, only update x/z
-      if (def.jumping) {
+      // Bunny/leaping tiger: Y controlled by physics, only update x/z
+      const physicsY = def.jumping || (def.leap && (u.jumpVel ?? 0) !== 0);
+      if (physicsY) {
         u.mesh.position.x = u.x;
         u.mesh.position.z = u.z;
       } else {
@@ -1551,8 +1570,15 @@ async function startBattle() {
 }
 
 // ─── Camera Update ────────────────────────────────────────────────────────────
-function updateCamera() {
-  // Start near own base (1/3 of field for p1, 2/3 for p2) so it's in frame at game start
+function updateCamera(dt = 0) {
+  // Inertia: continue sliding after release, decay with friction
+  if (!camPanActive && Math.abs(camPanVel) > 0.01) {
+    camPan = Math.max(-30, Math.min(30, camPan + camPanVel * dt));
+    camPanVel *= Math.max(0, 1 - 9 * dt);
+  } else if (!camPanActive) {
+    camPanVel = 0;
+  }
+
   const baseZ = localSide === 'p1' ? FIELD_LEN * 0.33 : FIELD_LEN * 0.67;
   const lookZ = baseZ + camPan;
   if (localSide === 'p1') {
@@ -1924,7 +1950,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  updateCamera();
+  updateCamera(dt);
 
   if (battleActive) {
     battleClock += dt;
