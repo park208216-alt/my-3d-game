@@ -8,40 +8,49 @@ export interface AnimalDef {
   attackLayer: AttackLayer;
   hp: number;
   atk: number;
-  spd: number;         // units/sec (underground spd = spd * 2 for mole)
-  atkCooldown: number; // seconds
-  range: number;       // attack range in world units
-  cost: number;        // currency cost
-  size: number;        // box half-size
-  color: number;       // hex color
-  ranged?: boolean;    // monkey: stops at range distance, never retreats
+  spd: number;
+  atkCooldown: number;
+  range: number;
+  cost: number;
+  size: number;
+  color: number;
+  ranged?: boolean;    // stops at range, never closes to melee (monkey, koala)
+  evasion?: number;    // 0-1 chance to dodge incoming attacks (cat: 0.5)
+  groupSpawn?: number; // spawn N units at once (chick: 4)
+  stinger?: boolean;   // first attack paralyzes target (bee)
+  jumping?: boolean;   // gravity-based continuous jumping (bunny)
+  charge?: boolean;    // fast animation speed (hog)
+  leap?: boolean;      // leaps at enemies 5+ units away (tiger)
+  leapRange?: number;  // distance threshold to trigger leap
 }
 
-// All stats tuned so base HP 30 = ~3 lion hits or 30 mouse hits
+// Size tiers:
+//  매우작음 (0.25): bee, chick
+//  작음     (0.40): bunny, cat, crab, penguin, fox, parrot
+//  중간     (0.55): dog, monkey, koala, beaver, pig, panda
+//  큼       (0.70): lion, deer, cow, hog, polar bear
+//  매우큼   (0.95): elephant, giraffe, tiger
+
+// atkCooldown = 3 / attackSpeed
 export const ANIMALS: Record<string, AnimalDef> = {
+  // ── Kept animals ─────────────────────────────────────────────────────────────
   lion: {
     id: 'lion', name: '사자',
     layer: 'ground', attackLayer: 'ground',
     hp: 25, atk: 10, spd: 1.5, atkCooldown: 1.0, range: 2.0,
-    cost: 4, size: 0.65, color: 0xf5a41f,
+    cost: 4, size: 0.70, color: 0xf5a41f,
   },
   elephant: {
     id: 'elephant', name: '코끼리',
     layer: 'ground', attackLayer: 'both',
     hp: 50, atk: 6, spd: 1.0, atkCooldown: 1.5, range: 3.0,
-    cost: 5, size: 1.0, color: 0x9b9b9b,
-  },
-  mouse: {
-    id: 'mouse', name: '토끼',
-    layer: 'ground', attackLayer: 'ground',
-    hp: 8, atk: 1, spd: 4.0, atkCooldown: 0.3, range: 1.2,
-    cost: 1, size: 0.4, color: 0xf0e0d0,
+    cost: 5, size: 0.95, color: 0x9b9b9b,
   },
   eagle: {
     id: 'eagle', name: '앵무새',
     layer: 'air', attackLayer: 'both',
     hp: 15, atk: 4, spd: 2.5, atkCooldown: 0.6, range: 2.5,
-    cost: 3, size: 0.5, color: 0x4a3728,
+    cost: 3, size: 0.40, color: 0x4a3728,
   },
   monkey: {
     id: 'monkey', name: '원숭이',
@@ -54,21 +63,143 @@ export const ANIMALS: Record<string, AnimalDef> = {
     id: 'mole', name: '비버',
     layer: 'underground', attackLayer: 'ground',
     hp: 10, atk: 2, spd: 5.0, atkCooldown: 0.6, range: 1.5,
-    cost: 2, size: 0.4, color: 0x7a5c40,
+    cost: 2, size: 0.50, color: 0x7a5c40,
+  },
+
+  // ── New animals ───────────────────────────────────────────────────────────────
+  bee: {
+    id: 'bee', name: '벌',
+    layer: 'air', attackLayer: 'both',
+    hp: 1, atk: 1, spd: 10, atkCooldown: 1.5, range: 4.0,
+    cost: 1, size: 0.25, color: 0xffcc00,
+    stinger: true,
+  },
+  bunny: {
+    id: 'bunny', name: '토끼',
+    layer: 'ground', attackLayer: 'both',
+    hp: 3, atk: 2, spd: 5, atkCooldown: 0.75, range: 1.0,
+    cost: 2, size: 0.40, color: 0xf0e0d0,
+    jumping: true,
+  },
+  cat: {
+    id: 'cat', name: '고양이',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 3, atk: 2, spd: 6, atkCooldown: 0.75, range: 2.0,
+    cost: 2, size: 0.40, color: 0xd4a060,
+    evasion: 0.5,
+  },
+  chick: {
+    id: 'chick', name: '병아리',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 1, atk: 0.1, spd: 7, atkCooldown: 0.3, range: 1.0,
+    cost: 1, size: 0.25, color: 0xffe080,
+    groupSpawn: 4,
+  },
+  cow: {
+    id: 'cow', name: '소',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 8, atk: 1, spd: 2, atkCooldown: 3.0, range: 1.0,
+    cost: 3, size: 0.70, color: 0xd4b090,
+  },
+  crab: {
+    id: 'crab', name: '게',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 1, atk: 1, spd: 2, atkCooldown: 0.375, range: 1.0,
+    cost: 1, size: 0.35, color: 0xcc4420,
+  },
+  deer: {
+    id: 'deer', name: '사슴',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 4, atk: 3, spd: 5, atkCooldown: 0.6, range: 1.0,
+    cost: 3, size: 0.70, color: 0xc09060,
+  },
+  dog: {
+    id: 'dog', name: '개',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 3, atk: 3, spd: 6, atkCooldown: 0.75, range: 1.0,
+    cost: 2, size: 0.55, color: 0xd4a050,
+  },
+  fox: {
+    id: 'fox', name: '여우',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 3, atk: 2, spd: 7, atkCooldown: 1.0, range: 1.0,
+    cost: 2, size: 0.45, color: 0xe06030,
+  },
+  giraffe: {
+    id: 'giraffe', name: '기린',
+    layer: 'ground', attackLayer: 'both',
+    hp: 4, atk: 2, spd: 7, atkCooldown: 0.43, range: 2.0,
+    cost: 3, size: 0.95, color: 0xd4b060,
+  },
+  hog: {
+    id: 'hog', name: '멧돼지',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 4, atk: 2, spd: 9, atkCooldown: 0.3, range: 1.0,
+    cost: 3, size: 0.60, color: 0x908080,
+    charge: true,
+  },
+  koala: {
+    id: 'koala', name: '코알라',
+    layer: 'ground', attackLayer: 'both',
+    hp: 2, atk: 5, spd: 1, atkCooldown: 3.0, range: 3.0,
+    cost: 3, size: 0.55, color: 0xa0a0a0,
+    ranged: true,
+  },
+  panda: {
+    id: 'panda', name: '판다',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 5, atk: 3, spd: 2, atkCooldown: 1.5, range: 1.0,
+    cost: 2, size: 0.60, color: 0xdddddd,
+  },
+  penguin: {
+    id: 'penguin', name: '펭귄',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 2, atk: 1, spd: 1, atkCooldown: 0.6, range: 1.0,
+    cost: 1, size: 0.40, color: 0x202020,
+  },
+  pig: {
+    id: 'pig', name: '돼지',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 6, atk: 1, spd: 4, atkCooldown: 1.0, range: 1.0,
+    cost: 3, size: 0.55, color: 0xffaaaa,
+  },
+  polar: {
+    id: 'polar', name: '북극곰',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 7, atk: 6, spd: 5, atkCooldown: 0.75, range: 2.0,
+    cost: 4, size: 0.70, color: 0xf0f0f8,
+  },
+  tiger: {
+    id: 'tiger', name: '호랑이',
+    layer: 'ground', attackLayer: 'ground',
+    hp: 7, atk: 7, spd: 7, atkCooldown: 0.43, range: 2.0,
+    cost: 6, size: 0.80, color: 0xe08030,
+    leap: true,
+    leapRange: 5,
   },
 };
 
-export const ANIMAL_IDS = ['lion', 'elephant', 'mouse', 'eagle', 'monkey', 'mole'];
+export const ANIMAL_IDS = [
+  // 1-cost
+  'bee', 'chick', 'crab', 'penguin',
+  // 2-cost
+  'bunny', 'cat', 'dog', 'fox', 'mole', 'panda',
+  // 3-cost
+  'cow', 'deer', 'eagle', 'giraffe', 'hog', 'koala', 'monkey', 'pig',
+  // 4-cost
+  'lion', 'polar',
+  // 5-cost
+  'elephant',
+  // 6-cost
+  'tiger',
+];
 
-// Base HP = 30 (in same units as atk)
-// 1P enemy base HP = 60
 export const BASE_HP = 60;
 export const BASE_HP_1P_ENEMY = 120;
 
-// Field constants (shared between client and server)
-export const FIELD_LEN = 45;
-export const SPAWN_P1 = 2.5;
-export const SPAWN_P2 = FIELD_LEN - 2.5;
-export const MOLE_SURFACE_DETECT = 2.5; // mole surfaces if enemy within this Z distance
+export const FIELD_LEN = 67.5;
+export const SPAWN_P1 = 4.0;
+export const SPAWN_P2 = FIELD_LEN - 4.0;
+export const MOLE_SURFACE_DETECT = 2.5;
 export const AIR_Y = 4.0;
 export const GROUND_Y = 0;
