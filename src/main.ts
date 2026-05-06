@@ -345,6 +345,11 @@ function updateTowerVisual(side: Side) {
   const newMesh = tintClone(template);
   // scale: level 0 = 2.0, level 1 = 3.0, level 2 = 4.0 (doubles at max)
   newMesh.scale.setScalar(2.0 * (1 + level * 0.5));
+  if (level === 2) {
+    const box = new THREE.Box3().setFromObject(newMesh);
+    const sz = new THREE.Vector3(); box.getSize(sz);
+    console.log(`[Tower] max level size: ${sz.x.toFixed(2)} × ${sz.y.toFixed(2)} × ${sz.z.toFixed(2)}`);
+  }
   newMesh.position.set(0, 0.4, side === 'p1' ? 2 : FIELD_LEN - 2);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
