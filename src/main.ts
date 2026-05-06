@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y, MOLE_SURFACE_DETECT } from './animals';
@@ -73,6 +74,175 @@ function loadAllModels(): Promise<void> {
 
 // 페이지 로드와 동시에 백그라운드에서 모델 로딩 시작
 loadAllModels();
+
+// ─── Boss System ──────────────────────────────────────────────────────────────
+interface BossDef {
+  id: string;
+  name: string;
+  file: string;        // FBX filename
+  hp: number;
+  atk: number;
+  spd: number;
+  atkCooldown: number;
+  range: number;
+  modelScale: number;  // FBX model scale (tune if needed)
+  collisionSize: number; // radius used for HP bar & collision
+  aoe?: number;        // AoE radius (dragon)
+  animWalk: string;    // animation clip name for walking
+  animAtk: string;     // animation clip name for attack
+}
+
+const BOSS_DEFS: Record<string, BossDef> = {
+  slime: {
+    id: 'slime', name: '슬라임', file: 'Slime.fbx',
+    hp: 25, atk: 5, spd: 4, atkCooldown: 3/4, range: 2,
+    modelScale: 0.012, collisionSize: 1.0,
+    animWalk: 'Slime_Walk', animAtk: 'Slime_Attack',
+  },
+  bat: {
+    id: 'bat', name: '박쥐', file: 'Bat.fbx',
+    hp: 50, atk: 10, spd: 3, atkCooldown: 3/3, range: 3,
+    modelScale: 0.022, collisionSize: 1.5,
+    animWalk: 'Bat_Flying', animAtk: 'Bat_Attack',
+  },
+  skeleton: {
+    id: 'skeleton', name: '해골', file: 'Skeleton.fbx',
+    hp: 100, atk: 15, spd: 2, atkCooldown: 3/2, range: 3,
+    modelScale: 0.030, collisionSize: 2.0,
+    animWalk: 'Skeleton_Running', animAtk: 'Skeleton_Attack',
+  },
+  dragon: {
+    id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
+    hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
+    modelScale: 0.050, collisionSize: 3.0,
+    aoe: 3,
+    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
+  },
+};
+
+// HP threshold → boss id (p2 base hp drops TO or BELOW this)
+const BOSS_THRESHOLDS: { hp: number; bossId: string }[] = [
+  { hp: 400, bossId: 'slime' },
+  { hp: 300, bossId: 'bat' },
+  { hp: 200, bossId: 'skeleton' },
+  { hp: 100, bossId: 'dragon' },
+];
+
+const bossTemplates: Record<string, THREE.Group | null> = {
+  slime: null, bat: null, skeleton: null, dragon: null,
+};
+let bossTemplatesLoading = false;
+
+function loadBossModels(): Promise<void> {
+  if (bossTemplatesLoading) return Promise.resolve();
+  bossTemplatesLoading = true;
+  const bossBase = `${import.meta.env.BASE_URL}boss/`;
+  const loader = new FBXLoader();
+  const tasks = Object.values(BOSS_DEFS).map(def =>
+    new Promise<void>(resolve => {
+      loader.load(`${bossBase}${def.file}`, (fbx) => {
+        bossTemplates[def.id] = fbx;
+        resolve();
+      }, undefined, (err) => {
+        console.warn(`[Boss] Failed to load ${def.file}:`, err);
+        resolve();
+      });
+    })
+  );
+  return Promise.all(tasks).then(() => {});
+}
+
+// FBX AnimationMixer helper: find clip by name substring
+function findClip(clips: THREE.AnimationClip[], name: string): THREE.AnimationClip | undefined {
+  return clips.find(c => c.name.includes(name)) ?? clips[0];
+}
+
+let bossSpawned: Record<string, boolean> = {};
+
+function resetBossSpawned() {
+  bossSpawned = { slime: false, bat: false, skeleton: false, dragon: false };
+}
+
+function spawnBoss(bossId: string): void {
+  const def = BOSS_DEFS[bossId];
+  const tmpl = bossTemplates[bossId];
+
+  // Create mesh from FBX template or fallback box
+  let mesh: THREE.Object3D;
+  let mixer: THREE.AnimationMixer | null = null;
+  let currentAnim = '';
+  const walkClipName = def.animWalk;
+
+  if (tmpl) {
+    mesh = tmpl.clone(true);
+    mesh.scale.setScalar(def.modelScale);
+    mesh.rotation.y = 0; // faces toward p1 (p2 side unit)
+
+    // Collect all animations from the cloned FBX
+    const clips: THREE.AnimationClip[] = [];
+    tmpl.animations.forEach(clip => clips.push(clip));
+
+    mixer = new THREE.AnimationMixer(mesh);
+    const walkClip = findClip(clips, walkClipName);
+    if (walkClip) {
+      mixer.clipAction(walkClip).play();
+      currentAnim = walkClipName;
+    }
+  } else {
+    // Fallback colored box
+    mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(def.collisionSize * 2, def.collisionSize * 2, def.collisionSize * 2),
+      new THREE.MeshStandardMaterial({ color: 0xff4400 })
+    );
+  }
+
+  const z = SPAWN_P2;
+  const x = 0;
+  const yPos = def.collisionSize;
+  mesh.position.set(x, yPos, z);
+  scene.add(mesh);
+
+  const hpSprite = makeHpSprite(def.hp, def.hp);
+  hpSprite.position.set(x, yPos + def.collisionSize + 1.2, z);
+  scene.add(hpSprite);
+
+  // "보스" label above HP bar
+  const bossLabel = makeTextSprite(`👑 ${def.name} 보스`, '#ffdd00', 2.5);
+  bossLabel.position.set(x, yPos + def.collisionSize + 2.4, z);
+  scene.add(bossLabel);
+
+  // Build a pseudo-AnimalDef so the existing AI/movement code works
+  const pseudoDef: AnimalDef = {
+    id: bossId as string,
+    name: def.name,
+    layer: 'ground',
+    attackLayer: 'both',
+    hp: def.hp, atk: def.atk, spd: def.spd,
+    atkCooldown: def.atkCooldown,
+    range: def.range,
+    cost: 0, size: def.collisionSize,
+    color: 0xff4400,
+    ...(def.aoe ? { aoe: def.aoe } as unknown as Partial<AnimalDef> : {}),
+  };
+  // Register pseudo-def so AI code can look it up
+  (ANIMALS as Record<string, AnimalDef>)[bossId] = pseudoDef;
+
+  const unit: UnitSim = {
+    id: `boss_${bossId}_${++unitIdCounter}`,
+    animalId: bossId,
+    side: 'p2',
+    z, x,
+    hp: def.hp, maxHp: def.hp,
+    state: 'moving',
+    atkTimer: 0,
+    mesh, hpSprite, dustMesh: null,
+    lastHp: def.hp,
+    mixer, currentAnim,
+    bossLabel,
+  } as UnitSim & { bossLabel: THREE.Sprite };
+
+  units.push(unit);
+}
 
 // ─── Environment Assets ───────────────────────────────────────────────────────
 const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
@@ -533,6 +703,7 @@ interface UnitSim {
   isLeaping?: boolean;           // tiger: arc in flight
   evadeLabel?: THREE.Sprite | null;
   evadeLabelTimer?: number;
+  bossLabel?: THREE.Sprite | null; // boss name label above unit
 }
 
 interface BaseSim {
@@ -884,6 +1055,7 @@ function removeUnitMeshes(unit: UnitSim) {
   if (unit.mixer) { unit.mixer.stopAllAction(); unit.mixer = null; }
   if (unit.paralyzedLabel) { scene.remove(unit.paralyzedLabel); unit.paralyzedLabel = null; }
   if (unit.evadeLabel) { scene.remove(unit.evadeLabel); unit.evadeLabel = null; }
+  if (unit.bossLabel) { scene.remove(unit.bossLabel); unit.bossLabel = null; }
 }
 
 // ─── Unit AI ──────────────────────────────────────────────────────────────────
@@ -1079,14 +1251,24 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
 
 // ─── Animation Helper ─────────────────────────────────────────────────────────
 function playAnim(u: UnitSim, name: string) {
-  if (!u.mixer || u.currentAnim === name) return;
-  const tmpl = modelTemplates[u.animalId];
-  if (!tmpl) return;
-  const clip = tmpl.animations.find(c => c.name === name);
+  if (!u.mixer) return;
+  // Boss units: map generic state name → boss-specific clip name
+  const bossDef = BOSS_DEFS[u.animalId];
+  let clipName = name;
+  if (bossDef) {
+    if (name === 'walk' || name === 'static') clipName = bossDef.animWalk;
+    else if (name === 'eat') clipName = bossDef.animAtk;
+  }
+  if (u.currentAnim === clipName) return;
+  // Get clips from boss template or regular model template
+  const clips = bossDef
+    ? (bossTemplates[u.animalId]?.animations ?? [])
+    : (modelTemplates[u.animalId]?.animations ?? []);
+  const clip = clips.find(c => c.name.includes(clipName)) ?? clips[0];
   if (!clip) return;
   u.mixer.stopAllAction();
   u.mixer.clipAction(clip).reset().fadeIn(0.15).play();
-  u.currentAnim = name;
+  u.currentAnim = clipName;
 }
 
 const STATE_ANIM: Record<UnitState, string> = {
@@ -1136,9 +1318,10 @@ function syncUnitMeshes() {
       u.dustMesh.position.set(u.x, 0.05, u.z);
       u.dustMesh.visible = underground;
     }
-    // Paralyzed / evade label positions
+    // Paralyzed / evade / boss label positions
     if (u.paralyzedLabel) u.paralyzedLabel.position.set(u.x, meshY + def.size + 1.3, u.z);
     if (u.evadeLabel) u.evadeLabel.position.set(u.x, meshY + def.size + 1.3, u.z);
+    if (u.bossLabel) u.bossLabel.position.set(u.x, meshY + def.size + 2.6, u.z);
   }
 
   for (const u of toRemove) {
@@ -1638,6 +1821,15 @@ async function startBattle() {
   p2Base = makeBase(FIELD_LEN - 2, teamColor(p2Team), enemyBaseHp);
   placeBaseTowers();
 
+  if (gameMode === '1p') {
+    // 적 타워 최대 레벨로 시작
+    p2TowerLevel = 2;
+    updateTowerVisual('p2');
+    // 보스 초기화 + 모델 로딩
+    resetBossSpawned();
+    loadBossModels();
+  }
+
   multiplayerTimeLeft = 120;
 
   buildSummonButtons();
@@ -1721,6 +1913,22 @@ function updateHud() {
 }
 
 // ─── 1P AI ───────────────────────────────────────────────────────────────────
+function checkBossThresholds() {
+  if (!p2Base) return;
+  const hp = p2Base.hp;
+  for (const { hp: threshold, bossId } of BOSS_THRESHOLDS) {
+    if (!bossSpawned[bossId] && hp <= threshold) {
+      bossSpawned[bossId] = true;
+      spawnBoss(bossId);
+      // 드래곤 등장 시 적 기지 옆에 발리스타 + 박격포 설치
+      if (bossId === 'dragon') {
+        placeSiege('ballista', 'p2');
+        placeSiege('catapult', 'p2');
+      }
+    }
+  }
+}
+
 function step1PAI(dt: number) {
   roundTimer -= dt;
   aiSpawnTimer -= dt;
@@ -1744,6 +1952,8 @@ function step1PAI(dt: number) {
       aiSpawnTimer = AI_ROUNDS[Math.min(round - 1, AI_ROUNDS.length - 1)].interval;
     }
   }
+
+  checkBossThresholds();
 }
 
 function checkWinLose() {
