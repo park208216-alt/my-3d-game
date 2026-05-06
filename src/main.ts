@@ -1423,13 +1423,15 @@ function buildDeckCards() {
 }
 
 function toggleDeckCard(id: string) {
+  console.log('[deck] toggleDeckCard', id, 'deck=', [...playerDeck]);
   const idx = playerDeck.indexOf(id);
   if (idx >= 0) {
     playerDeck.splice(idx, 1);
   } else {
-    if (playerDeck.length >= DECK_MAX) return;
+    if (playerDeck.length >= DECK_MAX) { console.log('[deck] at max, skip'); return; }
     playerDeck.push(id);
   }
+  console.log('[deck] after toggle deck=', [...playerDeck]);
   refreshDeckCards();
 }
 
@@ -2009,8 +2011,19 @@ $('btn-home-2p').addEventListener('click', () => {
   showScreen('lobby2p');
 });
 $('btn-home-deck').addEventListener('click', () => {
-  buildDeckCards();
-  showScreen('deck');
+  console.log('[deck] btn-home-deck clicked');
+  try {
+    buildDeckCards();
+    console.log('[deck] buildDeckCards OK, deck=', playerDeck);
+  } catch(e) {
+    console.error('[deck] buildDeckCards threw:', e);
+  }
+  try {
+    showScreen('deck');
+    console.log('[deck] showScreen(deck) OK');
+  } catch(e) {
+    console.error('[deck] showScreen threw:', e);
+  }
 });
 $('btn-home-save').addEventListener('click', async () => {
   if (!loggedInUserId) { alert('로그인이 필요합니다'); return; }
