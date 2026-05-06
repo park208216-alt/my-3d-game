@@ -32,7 +32,12 @@
       "Bash(unzip -o kenney_nature-kit.zip -d kenney_nature-kit)",
       "Bash(unzip -o kenney_tower-defense-kit.zip -d kenney_tower-defense-kit)",
       "Bash(git fetch *)",
-      "Bash(git rebase *)"
+      "Bash(git rebase *)",
+      "Bash(python3 -c ' *)",
+      "Bash(git -C /c/Users/KAR/Desktop/my-3d-game checkout main)",
+      "Bash(git merge *)",
+      "Bash(git -C /c/Users/KAR/Desktop/my-3d-game merge claude/priceless-shirley-babea1)",
+      "Bash(git -C /c/Users/KAR/Desktop/my-3d-game push origin main)"
     ]
   }
 }

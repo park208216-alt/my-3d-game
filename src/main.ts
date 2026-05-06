@@ -4,7 +4,8 @@ import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y, MOLE_SURFACE_DETECT } from './animals';
 import type { AnimalDef } from './animals';
-import { supabase, toEmail } from './supabase';
+import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK } from './supabase';
+import type { UserProfile } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
 const MODEL_MAP: Record<string, string> = {
@@ -499,8 +500,11 @@ const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type GameMode = '1p' | '2p';
-type Screen = 'login' | 'menu' | 'deck' | 'lobby2p' | 'battle' | 'result';
+type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'lobby2p' | 'battle' | 'result';
 let loggedInUsername = '';
+let loggedInUserId = '';
+let playerGold = 0;
+const GOLD_PER_WIN = 10;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
 
@@ -590,13 +594,16 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   camPanStartX = e.clientX;
   const dir = localSide === 'p2' ? 1 : -1;
   camPanLastDelta = dir * dx * 0.05;
-  camPan = Math.max(-30, Math.min(30, camPan + camPanLastDelta));
+  camPan = Math.max(-15, Math.min(15, camPan + camPanLastDelta));
 });
 renderer.domElement.addEventListener('pointerup', () => {
   camPanActive = false;
-  camPanVel = camPanLastDelta * 60; // convert last-frame delta to per-second velocity
+  camPanVel = camPanLastDelta * 60;
 });
-renderer.domElement.addEventListener('pointercancel', () => { camPanActive = false; camPanVel = 0; });
+renderer.domElement.addEventListener('pointercancel', () => {
+  camPanActive = false;
+  camPanVel = camPanLastDelta * 60; // preserve inertia on cancel (mobile scroll)
+});
 
 // ─── Field Geometry ───────────────────────────────────────────────────────────
 function buildField() {
@@ -1152,7 +1159,7 @@ function syncBaseMeshes() {
 
 // ─── Game State ───────────────────────────────────────────────────────────────
 let gameMode: GameMode = '1p';
-let currentScreen: Screen = 'menu'; // TODO: restore 'login' after testing
+let currentScreen: Screen = 'initial';
 let battleActive = false;
 let battleClock = 0; // elapsed seconds since battle start (for paralysis timing)
 
@@ -1187,7 +1194,10 @@ document.body.insertAdjacentHTML('beforeend', `
   .btn:hover{background:#3a55aa;}
   .btn.primary{background:#41c1ff;color:#031523;}
   .btn.primary:hover{background:#60d0ff;}
+  .btn.green{background:#2a7a4a;border-color:rgba(80,220,120,0.5);color:#a0ffb8;}
+  .btn.green:hover{background:#3a9a5a;}
   .btn.danger{background:#c03030;}
+  .btn:disabled{opacity:0.4;cursor:not-allowed;}
   h1{font-size:2.4em;margin:0 0 32px;letter-spacing:2px;}
   h2{font-size:1.6em;margin:0 0 20px;}
   input.field{padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.07);color:#e8eefc;font-size:15px;outline:none;width:240px;}
@@ -1195,30 +1205,64 @@ document.body.insertAdjacentHTML('beforeend', `
   .animal-card{padding:12px 16px;border-radius:12px;border:2px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);min-width:110px;text-align:center;font-size:13px;cursor:default;}
   .animal-card .aname{font-size:15px;font-weight:700;margin-bottom:6px;}
   .animal-card .astat{opacity:0.75;line-height:1.6;}
+  .full-btn{width:100%;padding:14px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;border:1px solid rgba(255,255,255,0.25);transition:background 0.15s;}
 </style>
 
-<!-- MENU -->
-<!-- LOGIN -->
-<div id="screen-login" class="screen">
-  <h1 style="margin-bottom:24px;">Zoo Battle</h1>
-  <div style="width:100%;max-width:320px;display:flex;flex-direction:column;gap:10px;">
-    <input class="field" id="in-login-id" placeholder="아이디" autocomplete="username" style="font-size:15px;">
-    <input class="field" id="in-login-pw" type="password" placeholder="비밀번호" autocomplete="current-password" style="font-size:15px;">
-    <div id="login-error" style="color:#ff7070;font-size:13px;min-height:18px;text-align:center;"></div>
-    <button class="btn primary" id="btn-login" style="margin-top:4px;">로그인</button>
-    <button class="btn" id="btn-signup">회원가입</button>
+<!-- INITIAL -->
+<div id="screen-initial" class="screen">
+  <h1>Zoo Battle</h1>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:12px;width:220px;">
+    <button class="btn primary full-btn" id="btn-start" style="font-size:18px;">시작하기</button>
+    <button class="btn full-btn" id="btn-load-progress" style="background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.18);font-size:14px;padding:10px;">진행상황 불러오기</button>
   </div>
 </div>
 
-<!-- MENU -->
-<div id="screen-menu" class="screen hidden">
-  <h1>Zoo Battle</h1>
-  <div style="font-size:13px;color:#adf;margin-bottom:8px;" id="menu-username"></div>
-  <div class="gap">
-    <button class="btn primary" id="btn-1p">1인용</button>
-    <button class="btn" id="btn-2p">2인용 (온라인)</button>
+<!-- LOGIN -->
+<div id="screen-login" class="screen hidden">
+  <h2 style="margin-bottom:20px;">로그인</h2>
+  <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px;">
+    <input class="field" id="in-login-id" placeholder="아이디" autocomplete="username">
+    <input class="field" id="in-login-pw" type="password" placeholder="비밀번호" autocomplete="current-password">
+    <div id="login-error" style="color:#ff7070;font-size:13px;min-height:18px;text-align:center;"></div>
+    <button class="btn primary full-btn" id="btn-login">로그인</button>
+    <button class="btn green full-btn" id="btn-go-signup" style="font-size:15px;">아이디 생성</button>
+    <button class="btn full-btn" id="btn-login-back" style="background:transparent;border-color:rgba(255,255,255,0.15);font-size:13px;padding:10px;opacity:0.6;">← 돌아가기</button>
   </div>
-  <button class="btn" id="btn-logout" style="margin-top:16px;opacity:0.6;font-size:12px;">로그아웃</button>
+</div>
+
+<!-- SIGNUP -->
+<div id="screen-signup" class="screen hidden">
+  <h2 style="margin-bottom:20px;">아이디 생성</h2>
+  <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px;">
+    <input class="field" id="in-signup-id" placeholder="아이디" autocomplete="username">
+    <input class="field" id="in-signup-pw1" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password">
+    <input class="field" id="in-signup-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
+    <div id="signup-error" style="color:#ff7070;font-size:13px;min-height:18px;text-align:center;"></div>
+    <button class="btn primary full-btn" id="btn-signup-confirm">아이디 생성</button>
+    <button class="btn full-btn" id="btn-signup-back" style="background:transparent;border-color:rgba(255,255,255,0.15);font-size:13px;padding:10px;opacity:0.6;">← 돌아가기</button>
+  </div>
+</div>
+
+<!-- LOADING -->
+<div id="screen-loading" class="screen hidden">
+  <div style="width:48px;height:48px;border:5px solid rgba(255,255,255,0.15);border-top-color:#41c1ff;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:20px;"></div>
+  <div style="color:#a0c8ff;font-size:16px;">불러오는 중...</div>
+</div>
+
+<!-- HOME -->
+<div id="screen-home" class="screen hidden">
+  <div style="position:absolute;top:0;left:0;right:0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.35);border-bottom:1px solid rgba(255,255,255,0.08);">
+    <span id="home-username" style="font-size:14px;color:#adf;font-weight:700;">Guest</span>
+    <span id="home-gold" style="font-size:14px;color:#ffd060;font-weight:700;">💰 0</span>
+  </div>
+  <h1 style="margin-bottom:24px;">Zoo Battle</h1>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:220px;">
+    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">혼자서 플레이</button>
+    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">둘이서 플레이</button>
+    <button class="btn full-btn" id="btn-home-deck">덱</button>
+    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">상점 (준비 중)</button>
+    <button class="btn full-btn" id="btn-home-save" style="background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.18);font-size:13px;padding:10px;opacity:0.7;">진행상황 저장하기</button>
+  </div>
 </div>
 
 <!-- DECK -->
@@ -1229,28 +1273,27 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
   <div id="deck-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;overflow-y:auto;width:100%;max-width:640px;flex:1;align-content:start;padding-bottom:8px;"></div>
   <div style="margin-top:14px;width:100%;max-width:640px;" class="gap">
-    <button class="btn" id="btn-deck-back">← 뒤로</button>
-    <button class="btn primary" id="btn-deck-start" disabled style="opacity:0.4;">전투 시작 →</button>
+    <button class="btn" id="btn-deck-back">← 저장하고 돌아가기</button>
   </div>
 </div>
 
 <!-- 2P LOBBY -->
 <div id="screen-lobby2p" class="screen hidden">
   <h2>2인 대전 로비</h2>
-  <input class="field" id="in-nick" placeholder="닉네임" style="margin-bottom:10px;">
   <input class="field" id="in-room" placeholder="방 코드 (예: BATTLE1)" style="margin-bottom:10px;">
   <div class="gap" style="margin-bottom:10px;">
     <button class="btn" id="btn-rndroom">랜덤 코드</button>
     <button class="btn primary" id="btn-joinroom">참가</button>
   </div>
   <div id="lobby-status" style="font-size:13px;opacity:0.8;min-height:20px;"></div>
-  <button class="btn" id="btn-lobby-back" style="margin-top:16px;">← 뒤로</button>
+  <button class="btn" id="btn-lobby-back" style="margin-top:16px;">← 돌아가기</button>
 </div>
 
 <!-- RESULT -->
 <div id="screen-result" class="screen hidden">
   <h2 id="result-text">결과</h2>
-  <button class="btn primary" id="btn-result-menu">메인 메뉴로</button>
+  <div id="result-gold" style="font-size:15px;color:#ffd060;font-weight:700;margin-bottom:12px;min-height:22px;"></div>
+  <button class="btn primary" id="btn-result-menu">홈으로</button>
 </div>
 
 <!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
@@ -1329,21 +1372,24 @@ function showLoadingOverlay(show: boolean) {
 // ─── Screen Manager ───────────────────────────────────────────────────────────
 function showScreen(s: Screen) {
   currentScreen = s;
-  $('screen-login').classList.toggle('hidden', s !== 'login');
-  $('screen-menu').classList.toggle('hidden', s !== 'menu');
-  $('screen-deck').classList.toggle('hidden', s !== 'deck');
-  $('screen-lobby2p').classList.toggle('hidden', s !== 'lobby2p');
-  $('screen-result').classList.toggle('hidden', s !== 'result');
+  const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result'];
+  for (const id of screens) $(`screen-${id}`).classList.toggle('hidden', s !== id);
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
 }
-showScreen('menu');
+
+function updateHomeDisplay() {
+  ($('home-username') as HTMLElement).textContent = loggedInUsername || 'Guest';
+  ($('home-gold') as HTMLElement).textContent = `💰 ${playerGold}`;
+}
+
+showScreen('initial');
 renderer.domElement.style.display = 'none';
 
 // ─── Deck Screen ──────────────────────────────────────────────────────────────
 const DECK_MAX = 6;
-let playerDeck: string[] = [];
+let playerDeck: string[] = [...DEFAULT_DECK];
 
 function buildDeckCards() {
   const container = $('deck-cards');
@@ -1614,7 +1660,7 @@ function updateCamera(dt = 0) {
 
   // Inertia: continue sliding after release, decay with friction
   if (!camPanActive && Math.abs(camPanVel) > 0.01) {
-    camPan = Math.max(-30, Math.min(30, camPan + camPanVel * dt));
+    camPan = Math.max(-15, Math.min(15, camPan + camPanVel * dt));
     camPanVel *= Math.max(0, 1 - 9 * dt);
   } else if (!camPanActive) {
     camPanVel = 0;
@@ -1702,6 +1748,12 @@ function checkWinLose() {
 function endBattle(result: 'win' | 'lose' | 'draw') {
   battleActive = false;
   $('result-text').textContent = result === 'win' ? '🎉 승리!' : result === 'lose' ? '💀 패배...' : '🤝 무승부!';
+  let goldMsg = '';
+  if (result === 'win' && gameMode === '1p') {
+    playerGold += GOLD_PER_WIN;
+    goldMsg = `+${GOLD_PER_WIN} 💰 골드 획득!`;
+  }
+  ($('result-gold') as HTMLElement).textContent = goldMsg;
   showScreen('result');
 }
 
@@ -1931,47 +1983,59 @@ socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
   endBattle(iWin ? 'win' : 'lose');
 });
 
-// ─── Menu Button Handlers ──────────────────────────────────────────────────────
-$('btn-1p').addEventListener('click', () => {
+// ─── Button Handlers ──────────────────────────────────────────────────────────
+
+// Initial
+$('btn-start').addEventListener('click', () => {
+  loggedInUsername = '';
+  loggedInUserId = '';
+  playerGold = 0;
+  updateHomeDisplay();
+  showScreen('home');
+});
+$('btn-load-progress').addEventListener('click', () => showScreen('login'));
+
+// Home
+$('btn-home-1p').addEventListener('click', () => {
   gameMode = '1p';
   localSide = 'p1';
-  playerDeck = [];
-  buildDeckCards();
-  showScreen('deck');
+  startBattle();
 });
-
-$('btn-2p').addEventListener('click', () => {
+$('btn-home-2p').addEventListener('click', () => {
   gameMode = '2p';
-  playerDeck = [];
+  showScreen('lobby2p');
+});
+$('btn-home-deck').addEventListener('click', () => {
   buildDeckCards();
   showScreen('deck');
 });
-
-$('btn-deck-back').addEventListener('click', () => showScreen('menu'));
-$('btn-deck-start').addEventListener('click', () => {
-  if (gameMode === '2p') {
-    const nick = `Player${Math.floor(Math.random() * 900 + 100)}`;
-    ($('in-nick') as HTMLInputElement).value = nick;
-    showScreen('lobby2p');
-  } else {
-    startBattle();
-  }
+$('btn-home-save').addEventListener('click', async () => {
+  if (!loggedInUserId) { alert('로그인이 필요합니다'); return; }
+  const btn = $('btn-home-save') as HTMLButtonElement;
+  btn.textContent = '저장 중...';
+  btn.disabled = true;
+  const ok = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...DEFAULT_DECK] });
+  btn.textContent = ok ? '저장 완료 ✓' : '저장 실패';
+  btn.disabled = false;
+  setTimeout(() => { btn.textContent = '진행상황 저장하기'; }, 2000);
 });
 
+// Deck
+$('btn-deck-back').addEventListener('click', () => showScreen('home'));
+
+// Lobby
 $('btn-lobby-back').addEventListener('click', () => {
   socket.disconnect();
-  showScreen('menu');
+  showScreen('home');
 });
-
 $('btn-rndroom').addEventListener('click', () => {
   const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let c = '';
   for (let i = 0; i < 6; i++) c += a[Math.floor(Math.random() * a.length)];
   ($('in-room') as HTMLInputElement).value = c;
 });
-
 $('btn-joinroom').addEventListener('click', () => {
-  const nick = ($('in-nick') as HTMLInputElement).value.trim().slice(0, 16) || 'Player';
+  const nick = (loggedInUsername || 'Guest').slice(0, 16);
   const room = ($('in-room') as HTMLInputElement).value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
   if (!room) { $('lobby-status').textContent = '방 코드를 입력하세요'; return; }
   $('lobby-status').textContent = '연결 중...';
@@ -1979,10 +2043,12 @@ $('btn-joinroom').addEventListener('click', () => {
   socket.emit('battleJoin', { nickname: nick, roomCode: room });
 });
 
+// Result
 $('btn-result-menu').addEventListener('click', () => {
   clearBattle();
   if (socket.connected) socket.disconnect();
-  showScreen('menu');
+  updateHomeDisplay();
+  showScreen('home');
 });
 
 // ─── Main Loop ────────────────────────────────────────────────────────────────
@@ -2037,65 +2103,72 @@ function animate() {
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-function setError(msg: string) { $('login-error').textContent = msg; }
+async function applyProfile(username: string, userId: string, profile: UserProfile) {
+  loggedInUsername = username;
+  loggedInUserId = userId;
+  playerGold = profile.gold;
+  playerDeck = profile.deck.length ? profile.deck : [...DEFAULT_DECK];
+  updateHomeDisplay();
+  showScreen('home');
+}
 
 async function handleLogin() {
   const id = ($('in-login-id') as HTMLInputElement).value.trim();
   const pw = ($('in-login-pw') as HTMLInputElement).value;
-  if (!id || !pw) { setError('아이디와 비밀번호를 입력하세요'); return; }
-  setError('');
+  const errEl = $('login-error');
+  if (!id || !pw) { errEl.textContent = '아이디와 비밀번호를 입력하세요'; return; }
+  errEl.textContent = '';
   ($('btn-login') as HTMLButtonElement).disabled = true;
-  const { error } = await supabase.auth.signInWithPassword({ email: toEmail(id), password: pw });
+  const { data, error } = await supabase.auth.signInWithPassword({ email: toEmail(id), password: pw });
   ($('btn-login') as HTMLButtonElement).disabled = false;
-  if (error) { setError('아이디 또는 비밀번호가 틀렸습니다'); return; }
-  loggedInUsername = id;
-  ($('menu-username') as HTMLElement).textContent = `${id} 님`;
-  ($('in-nick') as HTMLInputElement).value = id;
-  showScreen('menu');
+  if (error || !data.user) { errEl.textContent = '아이디 또는 비밀번호가 틀렸습니다'; return; }
+  showScreen('loading');
+  const profile = await ensureProfile(data.user.id);
+  await applyProfile(id, data.user.id, profile);
 }
 
-async function handleSignup() {
-  const id = ($('in-login-id') as HTMLInputElement).value.trim();
-  const pw = ($('in-login-pw') as HTMLInputElement).value;
-  if (!id || !pw) { setError('아이디와 비밀번호를 입력하세요'); return; }
-  if (pw.length < 6) { setError('비밀번호는 6자 이상이어야 합니다'); return; }
-  setError('');
-  ($('btn-signup') as HTMLButtonElement).disabled = true;
-  const { error } = await supabase.auth.signUp({ email: toEmail(id), password: pw });
-  ($('btn-signup') as HTMLButtonElement).disabled = false;
+async function handleSignupConfirm() {
+  const id  = ($('in-signup-id') as HTMLInputElement).value.trim();
+  const pw1 = ($('in-signup-pw1') as HTMLInputElement).value;
+  const pw2 = ($('in-signup-pw2') as HTMLInputElement).value;
+  const errEl = $('signup-error');
+  if (!id || !pw1 || !pw2) { errEl.textContent = '모든 항목을 입력하세요'; return; }
+  if (pw1.length < 6) { errEl.textContent = '비밀번호는 6자 이상이어야 합니다'; return; }
+  if (pw1 !== pw2) { errEl.textContent = '비밀번호가 일치하지 않습니다'; return; }
+  errEl.textContent = '';
+  ($('btn-signup-confirm') as HTMLButtonElement).disabled = true;
+  const { data, error } = await supabase.auth.signUp({ email: toEmail(id), password: pw1 });
+  ($('btn-signup-confirm') as HTMLButtonElement).disabled = false;
   if (error) {
-    setError(error.message.includes('already') ? '이미 사용 중인 아이디입니다' : error.message);
+    errEl.textContent = error.message.includes('already') ? '이미 사용 중인 아이디입니다' : error.message;
     return;
   }
-  loggedInUsername = id;
-  ($('menu-username') as HTMLElement).textContent = `${id} 님`;
-  ($('in-nick') as HTMLInputElement).value = id;
-  showScreen('menu');
+  if (!data.user) { errEl.textContent = '생성 실패. 다시 시도하세요'; return; }
+  showScreen('loading');
+  const profile = await ensureProfile(data.user.id);
+  await applyProfile(id, data.user.id, profile);
 }
 
 $('btn-login').addEventListener('click', handleLogin);
-$('btn-signup').addEventListener('click', handleSignup);
-($('in-login-pw') as HTMLInputElement).addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') handleLogin();
+($('in-login-pw') as HTMLInputElement).addEventListener('keydown', (e) => { if (e.key === 'Enter') handleLogin(); });
+$('btn-go-signup').addEventListener('click', () => {
+  $('signup-error').textContent = '';
+  showScreen('signup');
 });
+$('btn-login-back').addEventListener('click', () => showScreen('initial'));
 
-$('btn-logout').addEventListener('click', async () => {
-  await supabase.auth.signOut();
-  loggedInUsername = '';
-  ($('in-login-id') as HTMLInputElement).value = '';
-  ($('in-login-pw') as HTMLInputElement).value = '';
-  setError('');
-  showScreen('menu');
-});
+$('btn-signup-confirm').addEventListener('click', handleSignupConfirm);
+($('in-signup-pw2') as HTMLInputElement).addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSignupConfirm(); });
+$('btn-signup-back').addEventListener('click', () => showScreen('login'));
 
 // Restore session on page load
-supabase.auth.getSession().then(({ data }) => {
+supabase.auth.getSession().then(async ({ data }) => {
   const user = data.session?.user;
   if (user?.email) {
-    loggedInUsername = user.email.replace('@zoobattle.local', '');
-    ($('menu-username') as HTMLElement).textContent = `${loggedInUsername} 님`;
-    ($('in-nick') as HTMLInputElement).value = loggedInUsername;
-    showScreen('menu');
+    const username = user.email.replace('@zoobattle.local', '');
+    showScreen('loading');
+    const profile = await ensureProfile(user.id);
+    await applyProfile(username, user.id, profile);
   }
 });
 

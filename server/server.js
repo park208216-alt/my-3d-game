@@ -20,7 +20,7 @@ const io = new Server(httpServer, {
 });
 
 // ── Game Constants (must match animals.ts) ────────────────────────────────────
-const FIELD_LEN = 67.5;
+const FIELD_LEN = 45;
 const SPAWN_P1 = 4.0;
 const SPAWN_P2 = FIELD_LEN - 4.0;
 const MOLE_SURFACE_DETECT = 2.5;
