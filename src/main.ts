@@ -504,6 +504,7 @@ type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'sh
 let loggedInUsername = '';
 let loggedInUserId = '';
 let playerGold = 0;
+let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
 const GOLD_PER_WIN = 10;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
@@ -1234,6 +1235,7 @@ document.body.insertAdjacentHTML('beforeend', `
 <div id="screen-signup" class="screen hidden">
   <h2 style="margin-bottom:20px;">아이디 생성</h2>
   <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px;">
+    <div id="signup-hint" style="display:none;background:rgba(65,193,255,0.12);border:1px solid rgba(65,193,255,0.35);border-radius:10px;padding:10px 12px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.5;">아이디를 만들면 현재 덱과 골드가<br>자동으로 저장됩니다 💾</div>
     <input class="field" id="in-signup-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-signup-pw1" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password">
     <input class="field" id="in-signup-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
@@ -2026,7 +2028,14 @@ $('btn-home-deck').addEventListener('click', () => {
   }
 });
 $('btn-home-save').addEventListener('click', async () => {
-  if (!loggedInUserId) { alert('로그인이 필요합니다'); return; }
+  if (!loggedInUserId) {
+    // 게스트 → 아이디 생성 화면으로 이동해서 가입 후 저장
+    signupFrom = 'home';
+    $('signup-error').textContent = '';
+    ($('signup-hint') as HTMLElement).style.display = 'block';
+    showScreen('signup');
+    return;
+  }
   const btn = $('btn-home-save') as HTMLButtonElement;
   btn.textContent = '저장 중...';
   btn.disabled = true;
@@ -2162,8 +2171,17 @@ async function handleSignupConfirm() {
   }
   if (!data.user) { errEl.textContent = '생성 실패. 다시 시도하세요'; return; }
   showScreen('loading');
-  const profile = await ensureProfile(data.user.id);
-  await applyProfile(id, data.user.id, profile);
+  if (signupFrom === 'home') {
+    // 게스트 진행 상황(덱·골드)을 새 계정에 저장
+    const profile = { gold: playerGold, deck: [...playerDeck], owned_animals: [...ANIMAL_IDS] };
+    await supabase.from('profiles').upsert({ id: data.user.id, ...profile });
+    await applyProfile(id, data.user.id, profile);
+  } else {
+    const profile = await ensureProfile(data.user.id);
+    await applyProfile(id, data.user.id, profile);
+  }
+  ($('signup-hint') as HTMLElement).style.display = 'none';
+  signupFrom = 'initial';
 }
 
 $('btn-login').addEventListener('click', handleLogin);
@@ -2176,7 +2194,12 @@ $('btn-login-back').addEventListener('click', () => showScreen('initial'));
 
 $('btn-signup-confirm').addEventListener('click', handleSignupConfirm);
 ($('in-signup-pw2') as HTMLInputElement).addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSignupConfirm(); });
-$('btn-signup-back').addEventListener('click', () => showScreen('login'));
+$('btn-signup-back').addEventListener('click', () => {
+  ($('signup-hint') as HTMLElement).style.display = 'none';
+  const from = signupFrom;
+  signupFrom = 'initial';
+  showScreen(from === 'home' ? 'home' : 'login');
+});
 
 // Restore session on page load
 supabase.auth.getSession().then(async ({ data }) => {
