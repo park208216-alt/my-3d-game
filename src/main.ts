@@ -1214,7 +1214,7 @@ document.body.insertAdjacentHTML('beforeend', `
   <h1>Zoo Battle</h1>
   <div style="display:flex;flex-direction:column;align-items:center;gap:12px;width:220px;">
     <button class="btn primary full-btn" id="btn-start" style="font-size:18px;">시작하기</button>
-    <button class="btn full-btn" id="btn-load-progress" style="background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.18);font-size:14px;padding:10px;">진행상황 불러오기</button>
+    <button class="btn full-btn" id="btn-load-progress" style="background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.18);font-size:14px;padding:10px;">로그인 (진행상황 불러오기)</button>
   </div>
 </div>
 
@@ -1413,7 +1413,7 @@ function buildDeckCards() {
       'transition:border-color 0.12s,background 0.12s;user-select:none;',
     ].join('');
     card.innerHTML = `
-      <div style="font-size:15px;font-weight:700;color:#${d.color.toString(16).padStart(6,'0')};margin-bottom:4px;">${d.name}</div>
+      <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;">${d.name}</div>
       <div style="opacity:0.75;line-height:1.6;font-size:11px;">
         HP ${d.hp} / ATK ${d.atk}<br>
         SPD ${d.spd} / 비용 <b>${d.cost}</b>
@@ -1469,7 +1469,7 @@ function buildSummonButtons() {
     const btn = document.createElement('button');
     btn.dataset.id = id;
     btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
-    btn.innerHTML = `<span style="font-size:14px;color:#${d.color.toString(16).padStart(6,'0')}">${d.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${d.cost}</span>`;
+    btn.innerHTML = `<span style="font-size:14px;color:#fff">${d.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${d.cost}</span>`;
     btn.addEventListener('click', () => playerSummon(id));
     grid.appendChild(btn);
     summonBtns.push(btn);
