@@ -324,10 +324,10 @@ function stepSiegeWeapons(dt: number) {
     });
 
     if (sw.type === 'ballista') {
-      sw.atkTimer = 1.5; // atkCooldown
+      sw.atkTimer = 0.3; // atk speed 10
       fireArrow(sw, target);
     } else {
-      sw.atkTimer = 3.0;
+      sw.atkTimer = 3.0; // atk speed 1
       fireBoulder(sw, target);
     }
   }
@@ -353,7 +353,7 @@ function fireArrow(sw: SiegeWeapon, target: UnitSim) {
   projectiles.push({
     type: 'arrow', mesh, side: sw.side,
     pos: from.clone(), vel: dir.multiplyScalar(speed),
-    damage: 2, aoe: 0, done: false,
+    damage: 1, aoe: 0, done: false,
   });
 }
 
@@ -380,7 +380,7 @@ function fireBoulder(sw: SiegeWeapon, target: UnitSim) {
   projectiles.push({
     type: 'boulder', mesh, side: sw.side,
     pos: from.clone(), vel,
-    damage: 2, aoe: 2.5, done: false,
+    damage: 10, aoe: 2.5, done: false,
   });
 }
 
@@ -473,10 +473,10 @@ function updateSiegeButtons() {
     btnB.style.cursor = currency >= SIEGE_COST ? 'pointer' : 'not-allowed';
   }
   if (myCatapult) {
-    btnC.textContent = '투석기 ✓';
+    btnC.textContent = '박격포 ✓';
     btnC.style.opacity = '0.5'; btnC.style.cursor = 'not-allowed';
   } else {
-    btnC.textContent = `투석기 (${SIEGE_COST})`;
+    btnC.textContent = `박격포 (${SIEGE_COST})`;
     btnC.style.opacity = currency >= SIEGE_COST ? '1' : '0.4';
     btnC.style.cursor = currency >= SIEGE_COST ? 'pointer' : 'not-allowed';
   }
@@ -1348,7 +1348,7 @@ document.body.insertAdjacentHTML('beforeend', `
       <button id="btn-upgrade" style="flex:1;min-width:120px;padding:5px 6px;border-radius:8px;border:1px solid rgba(255,200,80,0.5);background:rgba(255,200,80,0.12);color:#ffe08a;font-weight:700;cursor:pointer;font-size:10px;">⬆ 기지 업그레이드</button>
       <span id="upgrade-info" style="font-size:10px;opacity:0.7;white-space:nowrap;min-width:40px;text-align:right;"></span>
       <button id="btn-ballista" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(100,200,255,0.4);background:rgba(100,200,255,0.1);color:#aae4ff;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">발리스타 (10)</button>
-      <button id="btn-catapult" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.1);color:#ffc888;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">투석기 (10)</button>
+      <button id="btn-catapult" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.1);color:#ffc888;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">박격포 (10)</button>
     </div>
   </div>
   <!-- Right: word quiz -->
