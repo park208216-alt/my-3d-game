@@ -11,7 +11,11 @@ const DOMAIN = '@zoobattle.local';
 export const toEmail = (username: string) => `${username}${DOMAIN}`;
 
 export const DEFAULT_DECK = ['crab', 'eagle', 'bunny', 'monkey', 'giraffe', 'polar'];
-const DEFAULT_OWNED    = ['crab', 'eagle', 'bunny', 'monkey', 'giraffe', 'polar'];
+export const ALL_ANIMALS = [
+  'bee','chick','crab','penguin','bunny','eagle','fox','koala','mole',
+  'cat','cow','deer','dog','monkey','panda','pig','giraffe','hog',
+  'lion','polar','tiger','elephant',
+];
 
 export interface UserProfile {
   gold: number;
@@ -22,7 +26,7 @@ export interface UserProfile {
 export async function loadProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
   if (error || !data) return null;
-  return { gold: data.gold ?? 0, deck: data.deck ?? DEFAULT_DECK, owned_animals: data.owned_animals ?? DEFAULT_OWNED };
+  return { gold: data.gold ?? 0, deck: data.deck ?? DEFAULT_DECK, owned_animals: data.owned_animals ?? ALL_ANIMALS };
 }
 
 export async function saveProfile(userId: string, profile: UserProfile): Promise<boolean> {
@@ -33,7 +37,7 @@ export async function saveProfile(userId: string, profile: UserProfile): Promise
 export async function ensureProfile(userId: string): Promise<UserProfile> {
   const existing = await loadProfile(userId);
   if (existing) return existing;
-  const fresh: UserProfile = { gold: 0, deck: [...DEFAULT_DECK], owned_animals: [...DEFAULT_OWNED] };
+  const fresh: UserProfile = { gold: 0, deck: [...DEFAULT_DECK], owned_animals: [...ALL_ANIMALS] };
   await supabase.from('profiles').insert({ id: userId, ...fresh });
   return fresh;
 }

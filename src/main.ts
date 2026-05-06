@@ -1450,10 +1450,6 @@ function refreshDeckCards() {
     card.style.cursor = dimmed ? 'not-allowed' : 'pointer';
   }
   $('deck-count').textContent = `${playerDeck.length} / ${DECK_MAX} 선택`;
-  const startBtn = $('btn-deck-start') as HTMLButtonElement;
-  const canStart = playerDeck.length > 0;
-  startBtn.disabled = !canStart;
-  startBtn.style.opacity = canStart ? '1' : '0.4';
 }
 
 // ─── Summon Buttons ───────────────────────────────────────────────────────────
@@ -2021,7 +2017,7 @@ $('btn-home-save').addEventListener('click', async () => {
   const btn = $('btn-home-save') as HTMLButtonElement;
   btn.textContent = '저장 중...';
   btn.disabled = true;
-  const ok = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...DEFAULT_DECK] });
+  const ok = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...ANIMAL_IDS] });
   btn.textContent = ok ? '저장 완료 ✓' : '저장 실패';
   btn.disabled = false;
   setTimeout(() => { btn.textContent = '진행상황 저장하기'; }, 2000);
