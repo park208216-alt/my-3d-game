@@ -22,6 +22,7 @@ export interface AnimalDef {
   charge?: boolean;    // fast animation speed (hog)
   leap?: boolean;      // leaps at enemies 5+ units away (tiger)
   leapRange?: number;  // distance threshold to trigger leap
+  baseY?: number;      // override ground y position (FBX bosses use 0; default = size)
 }
 
 // Size tiers:

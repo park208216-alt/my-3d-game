@@ -184,7 +184,7 @@ function spawnBoss(bossId: string): void {
     // SkeletonUtils.clone properly rebinds bones — regular .clone(true) breaks SkinnedMesh
     mesh = skeletonClone(tmpl) as THREE.Group;
     mesh.scale.setScalar(def.modelScale);
-    mesh.rotation.y = 0; // faces toward p1 (p2 side unit)
+    mesh.rotation.y = Math.PI; // p2 unit faces toward p1 (negative z)
 
     // Animations are on the original template; mixer resolves by bone name so it works with clone
     const clips = tmpl.animations;
@@ -204,17 +204,17 @@ function spawnBoss(bossId: string): void {
 
   const z = SPAWN_P2;
   const x = 0;
-  const yPos = def.collisionSize;
+  const yPos = 0; // FBX model feet at origin — grounded
   mesh.position.set(x, yPos, z);
   scene.add(mesh);
 
   const hpSprite = makeHpSprite(def.hp, def.hp);
-  hpSprite.position.set(x, yPos + def.collisionSize + 1.2, z);
+  hpSprite.position.set(x, def.collisionSize + 1.2, z);
   scene.add(hpSprite);
 
   // "보스" label above HP bar
   const bossLabel = makeTextSprite(`👑 ${def.name} 보스`, '#ffdd00', 2.5);
-  bossLabel.position.set(x, yPos + def.collisionSize + 2.4, z);
+  bossLabel.position.set(x, def.collisionSize + 2.4, z);
   scene.add(bossLabel);
 
   // Build a pseudo-AnimalDef so the existing AI/movement code works
@@ -228,6 +228,7 @@ function spawnBoss(bossId: string): void {
     range: def.range,
     cost: 0, size: def.collisionSize,
     color: 0xff4400,
+    baseY: 0, // FBX model origin is at feet — keep boss grounded
     ...(def.aoe ? { aoe: def.aoe } as unknown as Partial<AnimalDef> : {}),
   };
   // Register pseudo-def so AI code can look it up
@@ -1298,7 +1299,7 @@ function syncUnitMeshes() {
     const def = ANIMALS[u.animalId];
     if (!def) { console.warn('[syncUnitMeshes] missing def for', u.animalId); continue; }
     const underground = u.state === 'underground' && def.layer === 'underground';
-    const airY = def.layer === 'air' ? AIR_Y : def.size;
+    const airY = def.layer === 'air' ? AIR_Y : (def.baseY ?? def.size);
     const yPos = underground ? -5 : airY;
 
     if (u.mesh) {
