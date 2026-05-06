@@ -1187,7 +1187,7 @@ const $ = (id: string) => document.getElementById(id)!;
 document.body.insertAdjacentHTML('beforeend', `
 <style>
   *{box-sizing:border-box;}
-  body{font-family:system-ui,sans-serif;color:#e8eefc;}
+  body{font-family:system-ui,sans-serif;color:#e8eefc;touch-action:manipulation;}
   .screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(8,14,30,0.96);z-index:50;}
   .screen.hidden{display:none;}
   .btn{padding:12px 28px;border-radius:12px;border:1px solid rgba(255,255,255,0.25);background:#2a4080;color:#e8eefc;font-size:16px;font-weight:700;cursor:pointer;transition:background 0.15s;}
