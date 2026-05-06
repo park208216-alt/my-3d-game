@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y, MOLE_SURFACE_DETECT } from './animals';
@@ -178,14 +179,13 @@ function spawnBoss(bossId: string): void {
   const walkClipName = def.animWalk;
 
   if (tmpl) {
-    mesh = tmpl.clone(true);
+    // SkeletonUtils.clone properly rebinds bones — regular .clone(true) breaks SkinnedMesh
+    mesh = skeletonClone(tmpl) as THREE.Group;
     mesh.scale.setScalar(def.modelScale);
     mesh.rotation.y = 0; // faces toward p1 (p2 side unit)
 
-    // Collect all animations from the cloned FBX
-    const clips: THREE.AnimationClip[] = [];
-    tmpl.animations.forEach(clip => clips.push(clip));
-
+    // Animations are on the original template; mixer resolves by bone name so it works with clone
+    const clips = tmpl.animations;
     mixer = new THREE.AnimationMixer(mesh);
     const walkClip = findClip(clips, walkClipName);
     if (walkClip) {
