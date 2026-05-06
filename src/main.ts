@@ -343,7 +343,7 @@ function fireArrow(sw: SiegeWeapon, target: UnitSim) {
   let mesh: THREE.Object3D | null = null;
   if (tmpl) {
     mesh = tmpl.clone(true);
-    mesh.scale.setScalar(0.5);
+    mesh.scale.setScalar(1.5);
     mesh.position.copy(from);
     // Rotate arrow to point in movement direction
     mesh.lookAt(to);
@@ -372,7 +372,7 @@ function fireBoulder(sw: SiegeWeapon, target: UnitSim) {
   let mesh: THREE.Object3D | null = null;
   if (tmpl) {
     mesh = tmpl.clone(true);
-    mesh.scale.setScalar(0.5);
+    mesh.scale.setScalar(3.0);
     mesh.position.copy(from);
     scene.add(mesh);
   }
