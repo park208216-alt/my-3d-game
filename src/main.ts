@@ -137,19 +137,21 @@ function loadBossModels(): Promise<void> {
   if (bossTemplatesLoading) return Promise.resolve();
   bossTemplatesLoading = true;
   const bossBase = `${import.meta.env.BASE_URL}boss/`;
+  console.log('[Boss] loading FBX from base:', bossBase);
   const loader = new FBXLoader();
   const tasks = Object.values(BOSS_DEFS).map(def =>
     new Promise<void>(resolve => {
       loader.load(`${bossBase}${def.file}`, (fbx) => {
         bossTemplates[def.id] = fbx;
+        console.log(`[Boss] loaded ${def.file}, animations:`, fbx.animations.map(a => a.name));
         resolve();
       }, undefined, (err) => {
-        console.warn(`[Boss] Failed to load ${def.file}:`, err);
+        console.error(`[Boss] FAILED to load ${def.file}:`, err);
         resolve();
       });
     })
   );
-  return Promise.all(tasks).then(() => {});
+  return Promise.all(tasks).then(() => { console.log('[Boss] all models loaded'); });
 }
 
 // FBX AnimationMixer helper: find clip by name substring
@@ -164,8 +166,10 @@ function resetBossSpawned() {
 }
 
 function spawnBoss(bossId: string): void {
+  console.log(`[Boss] spawnBoss called: ${bossId}`);
   const def = BOSS_DEFS[bossId];
   const tmpl = bossTemplates[bossId];
+  console.log(`[Boss] template loaded: ${!!tmpl}, def:`, def);
 
   // Create mesh from FBX template or fallback box
   let mesh: THREE.Object3D;
@@ -242,6 +246,7 @@ function spawnBoss(bossId: string): void {
   } as UnitSim & { bossLabel: THREE.Sprite };
 
   units.push(unit);
+  console.log(`[Boss] unit pushed, mesh at (${x}, ${yPos}, ${z}), scene children: ${scene.children.length}`);
 }
 
 // ─── Environment Assets ───────────────────────────────────────────────────────
@@ -1117,6 +1122,7 @@ function stepUnits(dt: number) {
 
     // Bunny: continuous gravity bounce
     const def = ANIMALS[u.animalId];
+    if (!def) continue;
     if (def.jumping && u.jumpVel !== undefined) {
       u.jumpVel += JUMP_GRAVITY * dt;
       const baseY = def.size;
@@ -1288,6 +1294,7 @@ function syncUnitMeshes() {
       continue;
     }
     const def = ANIMALS[u.animalId];
+    if (!def) { console.warn('[syncUnitMeshes] missing def for', u.animalId); continue; }
     const underground = u.state === 'underground' && def.layer === 'underground';
     const airY = def.layer === 'air' ? AIR_Y : def.size;
     const yPos = underground ? -5 : airY;
@@ -1918,6 +1925,7 @@ function checkBossThresholds() {
   const hp = p2Base.hp;
   for (const { hp: threshold, bossId } of BOSS_THRESHOLDS) {
     if (!bossSpawned[bossId] && hp <= threshold) {
+      console.log(`[Boss] threshold triggered! p2Base.hp=${hp} <= ${threshold}, spawning ${bossId}`);
       bossSpawned[bossId] = true;
       spawnBoss(bossId);
       // 드래곤 등장 시 적 기지 옆에 발리스타 + 박격포 설치
