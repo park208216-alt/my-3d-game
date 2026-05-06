@@ -117,7 +117,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
     modelScale: 0.0707, collisionSize: 3.0,
     aoe: 3,
-    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
+    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack2',
   },
 };
 
