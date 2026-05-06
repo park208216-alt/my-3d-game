@@ -97,25 +97,25 @@ const BOSS_DEFS: Record<string, BossDef> = {
   slime: {
     id: 'slime', name: '슬라임', file: 'Slime.fbx',
     hp: 25, atk: 5, spd: 4, atkCooldown: 3/4, range: 2,
-    modelScale: 0.077, collisionSize: 1.0,
+    modelScale: 0.0138, collisionSize: 1.0,
     animWalk: 'Slime_Walk', animAtk: 'Slime_Attack',
   },
   bat: {
     id: 'bat', name: '박쥐', file: 'Bat.fbx',
     hp: 50, atk: 10, spd: 3, atkCooldown: 3/3, range: 3,
-    modelScale: 0.043, collisionSize: 1.5,
+    modelScale: 0.0083, collisionSize: 1.5,
     animWalk: 'Bat_Flying', animAtk: 'Bat_Attack',
   },
   skeleton: {
     id: 'skeleton', name: '해골', file: 'Skeleton.fbx',
     hp: 100, atk: 15, spd: 2, atkCooldown: 3/2, range: 3,
-    modelScale: 0.050, collisionSize: 2.0,
+    modelScale: 0.0101, collisionSize: 2.0,
     animWalk: 'Skeleton_Running', animAtk: 'Skeleton_Attack',
   },
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
-    modelScale: 0.085, collisionSize: 3.0,
+    modelScale: 0.0177, collisionSize: 3.0,
     aoe: 3,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
@@ -345,11 +345,6 @@ function updateTowerVisual(side: Side) {
   const newMesh = tintClone(template);
   // scale: level 0 = 2.0, level 1 = 3.0, level 2 = 4.0 (doubles at max)
   newMesh.scale.setScalar(2.0 * (1 + level * 0.5));
-  if (level === 2) {
-    const box = new THREE.Box3().setFromObject(newMesh);
-    const sz = new THREE.Vector3(); box.getSize(sz);
-    console.log(`[Tower] max level size: ${sz.x.toFixed(2)} × ${sz.y.toFixed(2)} × ${sz.z.toFixed(2)}`);
-  }
   newMesh.position.set(0, 0.4, side === 'p1' ? 2 : FIELD_LEN - 2);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
