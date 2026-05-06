@@ -23,6 +23,7 @@ export interface AnimalDef {
   leap?: boolean;      // leaps at enemies 5+ units away (tiger)
   leapRange?: number;  // distance threshold to trigger leap
   baseY?: number;      // override ground y position (FBX bosses use 0; default = size)
+  aoe?: number;        // splash attack radius (dragon)
 }
 
 // Size tiers:

@@ -134,6 +134,33 @@ const bossTemplates: Record<string, THREE.Group | null> = {
 };
 let bossTemplatesLoading = false;
 
+// ─── Boss Spawn Effects ───────────────────────────────────────────────────────
+interface BossSpawnEffect { ring: THREE.Mesh; mat: THREE.MeshBasicMaterial; age: number; }
+const bossSpawnEffects: BossSpawnEffect[] = [];
+
+function triggerBossSpawnEffect(z: number) {
+  const geo = new THREE.RingGeometry(0.2, 1, 48);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 1, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(0, 0.15, z);
+  scene.add(ring);
+  bossSpawnEffects.push({ ring, mat, age: 0 });
+}
+
+function updateBossSpawnEffects(dt: number) {
+  const DURATION = 1.2;
+  const MAX_SCALE = 10;
+  for (let i = bossSpawnEffects.length - 1; i >= 0; i--) {
+    const e = bossSpawnEffects[i];
+    e.age += dt;
+    const t = e.age / DURATION;
+    if (t >= 1) { scene.remove(e.ring); bossSpawnEffects.splice(i, 1); continue; }
+    e.ring.scale.setScalar(1 + MAX_SCALE * t);
+    e.mat.opacity = 1 - t;
+  }
+}
+
 function loadBossModels(): Promise<void> {
   if (bossTemplatesLoading) return Promise.resolve();
   bossTemplatesLoading = true;
@@ -229,7 +256,7 @@ function spawnBoss(bossId: string): void {
     cost: 0, size: def.collisionSize,
     color: 0xff4400,
     baseY: 0, // FBX model origin is at feet — keep boss grounded
-    ...(def.aoe ? { aoe: def.aoe } as unknown as Partial<AnimalDef> : {}),
+    ...(def.aoe ? { aoe: def.aoe } : {}),
   };
   // Register pseudo-def so AI code can look it up
   (ANIMALS as Record<string, AnimalDef>)[bossId] = pseudoDef;
@@ -1075,6 +1102,18 @@ function canAttackEnemy(def: AnimalDef, enemyDef: AnimalDef): boolean {
   return true;
 }
 
+// AOE wrapper: hit primary target + all enemies within def.aoe radius
+function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allEnemies: UnitSim[], now: number) {
+  dealDamage(attacker, primary, def.atk, now);
+  if (def.aoe) {
+    for (const e of allEnemies) {
+      if (e !== primary && Math.abs(e.z - primary.z) <= def.aoe && e.state !== 'dead') {
+        dealDamage(attacker, e, def.atk, now);
+      }
+    }
+  }
+}
+
 function dealDamage(attacker: UnitSim, target: UnitSim, atk: number, now: number): boolean {
   const tDef = ANIMALS[target.animalId];
   // Cat evasion
@@ -1202,7 +1241,7 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   if (def.ranged) {
     if (closest && closestDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { dealDamage(u, closest, def.atk, now); u.atkTimer = def.atkCooldown; }
+      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = def.atkCooldown; }
       return;
     }
     if (baseDist <= def.range) {
@@ -1215,7 +1254,7 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
 
   if (closest && closestDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { dealDamage(u, closest, def.atk, now); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = def.atkCooldown; }
     return;
   }
   if (baseDist <= def.range) {
@@ -1931,6 +1970,9 @@ function checkBossThresholds() {
       console.log(`[Boss] threshold triggered! p2Base.hp=${hp} <= ${threshold}, spawning ${bossId}`);
       bossSpawned[bossId] = true;
       spawnBoss(bossId);
+      // 보스 등장 이펙트 + p1 기지에 20 데미지
+      triggerBossSpawnEffect(p2Base.z);
+      if (p1Base) p1Base.hp = Math.max(0, p1Base.hp - 20);
       // 드래곤 등장 시 적 기지 옆에 발리스타 + 박격포 설치
       if (bossId === 'dragon') {
         placeSiege('ballista', 'p2');
@@ -2329,6 +2371,8 @@ function animate() {
       checkWinLose();
       step1PAI(dt);
     }
+
+    updateBossSpawnEffects(dt);
 
     if (quizMsgTimer > 0) {
       quizMsgTimer -= dt;
