@@ -97,25 +97,25 @@ const BOSS_DEFS: Record<string, BossDef> = {
   slime: {
     id: 'slime', name: '슬라임', file: 'Slime.fbx',
     hp: 25, atk: 5, spd: 4, atkCooldown: 3/4, range: 2,
-    modelScale: 0.012, collisionSize: 1.0,
+    modelScale: 0.02, collisionSize: 1.0,
     animWalk: 'Slime_Walk', animAtk: 'Slime_Attack',
   },
   bat: {
     id: 'bat', name: '박쥐', file: 'Bat.fbx',
     hp: 50, atk: 10, spd: 3, atkCooldown: 3/3, range: 3,
-    modelScale: 0.022, collisionSize: 1.5,
+    modelScale: 0.03, collisionSize: 1.5,
     animWalk: 'Bat_Flying', animAtk: 'Bat_Attack',
   },
   skeleton: {
     id: 'skeleton', name: '해골', file: 'Skeleton.fbx',
     hp: 100, atk: 15, spd: 2, atkCooldown: 3/2, range: 3,
-    modelScale: 0.030, collisionSize: 2.0,
+    modelScale: 0.04, collisionSize: 2.0,
     animWalk: 'Skeleton_Running', animAtk: 'Skeleton_Attack',
   },
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
-    modelScale: 0.050, collisionSize: 3.0,
+    modelScale: 0.07, collisionSize: 3.0,
     aoe: 3,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
@@ -144,7 +144,9 @@ function loadBossModels(): Promise<void> {
     new Promise<void>(resolve => {
       loader.load(`${bossBase}${def.file}`, (fbx) => {
         bossTemplates[def.id] = fbx;
-        console.log(`[Boss] loaded ${def.file}, animations:`, fbx.animations.map(a => a.name));
+        const box = new THREE.Box3().setFromObject(fbx);
+        const sz = box.getSize(new THREE.Vector3());
+        console.log(`[Boss] loaded ${def.file} | size at scale 1:`, sz.x.toFixed(2), sz.y.toFixed(2), sz.z.toFixed(2), '| animations:', fbx.animations.map(a => a.name));
         resolve();
       }, undefined, (err) => {
         console.error(`[Boss] FAILED to load ${def.file}:`, err);
