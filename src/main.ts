@@ -1277,6 +1277,13 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
 </div>
 
+<!-- SHOP (placeholder) -->
+<div id="screen-shop" class="screen hidden">
+  <h2>상점</h2>
+  <p style="opacity:0.5;">준비 중입니다.</p>
+  <button class="btn" id="btn-shop-back">← 돌아가기</button>
+</div>
+
 <!-- 2P LOBBY -->
 <div id="screen-lobby2p" class="screen hidden">
   <h2>2인 대전 로비</h2>
@@ -2022,6 +2029,7 @@ $('btn-home-save').addEventListener('click', async () => {
 
 // Deck
 $('btn-deck-back').addEventListener('click', () => showScreen('home'));
+$('btn-shop-back').addEventListener('click', () => showScreen('home'));
 
 // Lobby
 $('btn-lobby-back').addEventListener('click', () => {
