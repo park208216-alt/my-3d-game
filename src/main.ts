@@ -4,7 +4,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { io } from 'socket.io-client';
 import { wordList } from './words';
-import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y, MOLE_SURFACE_DETECT } from './animals';
+import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
 import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK } from './supabase';
 import type { UserProfile } from './supabase';
