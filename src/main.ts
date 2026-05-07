@@ -134,6 +134,62 @@ const bossTemplates: Record<string, THREE.Group | null> = {
 };
 let bossTemplatesLoading = false;
 
+// ─── Cute-Monster System ──────────────────────────────────────────────────────
+const MONSTER_FILE_MAP: Record<string, string> = {
+  m_chicken:'Chicken', m_bee:'Bee', m_mushroom:'Mushroom', m_crab:'Crab',
+  m_bat:'Bat', m_penguin:'Penguin', m_pig:'Pig', m_panda:'Panda',
+  m_deer:'Deer', m_alien:'Alien', m_ghost:'Ghost', m_skull:'Skull',
+  m_greendemon:'GreenDemon', m_cyclops:'Cyclops', m_cactus:'Cactus',
+  m_demon:'Demon', m_yeti:'Yeti', m_tree:'Tree', m_alien_tall:'Alien_Tall',
+  m_cthulhu:'Cthulhu', m_yellowdragon:'YellowDragon',
+};
+
+// Register monster AnimalDefs so AI/movement code can look them up
+(function registerMonsters() {
+  const S = 0.35, M = 0.5, L = 0.65; // size (collision radius)
+  const defs: AnimalDef[] = [
+    { id:'m_chicken',    name:'닭',        layer:'ground', attackLayer:'ground', hp:6,  atk:1,   spd:6, atkCooldown:0.4,  range:1, cost:0, size:S, color:0xffe080 },
+    { id:'m_bee',        name:'벌',        layer:'air',    attackLayer:'both',   hp:5,  atk:0.5, spd:9, atkCooldown:0.3,  range:3, cost:0, size:S, color:0xffcc00 },
+    { id:'m_mushroom',   name:'버섯',      layer:'ground', attackLayer:'ground', hp:10, atk:1,   spd:2, atkCooldown:0.6,  range:1, cost:0, size:S, color:0xcc6633 },
+    { id:'m_crab',       name:'게',        layer:'ground', attackLayer:'ground', hp:10, atk:2,   spd:4, atkCooldown:0.5,  range:1, cost:0, size:S, color:0xcc4420 },
+    { id:'m_bat',        name:'박쥐',      layer:'air',    attackLayer:'both',   hp:10, atk:2,   spd:7, atkCooldown:0.5,  range:2, cost:0, size:S, color:0x7755aa },
+    { id:'m_penguin',    name:'펭귄',      layer:'ground', attackLayer:'ground', hp:14, atk:1,   spd:2, atkCooldown:0.5,  range:1, cost:0, size:S, color:0x202020 },
+    { id:'m_pig',        name:'돼지',      layer:'ground', attackLayer:'ground', hp:16, atk:2,   spd:3, atkCooldown:0.8,  range:1, cost:0, size:M, color:0xffaaaa },
+    { id:'m_panda',      name:'판다',      layer:'ground', attackLayer:'ground', hp:20, atk:3,   spd:2, atkCooldown:1.0,  range:1, cost:0, size:M, color:0xdddddd },
+    { id:'m_deer',       name:'사슴',      layer:'ground', attackLayer:'ground', hp:16, atk:3,   spd:5, atkCooldown:0.6,  range:1, cost:0, size:M, color:0xc09060 },
+    { id:'m_alien',      name:'에일리언',  layer:'ground', attackLayer:'ground', hp:18, atk:3,   spd:4, atkCooldown:0.6,  range:1, cost:0, size:M, color:0x44cc88 },
+    { id:'m_ghost',      name:'유령',      layer:'ground', attackLayer:'both',   hp:14, atk:3,   spd:5, atkCooldown:0.5,  range:2, cost:0, size:M, color:0xffffff },
+    { id:'m_skull',      name:'해골',      layer:'ground', attackLayer:'ground', hp:18, atk:4,   spd:3, atkCooldown:0.7,  range:1, cost:0, size:M, color:0xeeeecc },
+    { id:'m_greendemon', name:'초록악마',  layer:'ground', attackLayer:'both',   hp:22, atk:4,   spd:4, atkCooldown:0.75, range:4, cost:0, size:M, color:0x44aa44, ranged:true },
+    { id:'m_cyclops',    name:'외눈괴물',  layer:'ground', attackLayer:'ground', hp:26, atk:6,   spd:3, atkCooldown:1.0,  range:1, cost:0, size:M, color:0x5588bb },
+    { id:'m_cactus',     name:'선인장',    layer:'ground', attackLayer:'both',   hp:20, atk:4,   spd:2, atkCooldown:0.75, range:5, cost:0, size:M, color:0x55aa55, ranged:true },
+    { id:'m_demon',      name:'악마',      layer:'ground', attackLayer:'both',   hp:22, atk:6,   spd:5, atkCooldown:0.5,  range:2, cost:0, size:M, color:0xcc3333 },
+    { id:'m_yeti',       name:'예티',      layer:'ground', attackLayer:'ground', hp:32, atk:6,   spd:3, atkCooldown:1.0,  range:1, cost:0, size:L, color:0xaaddff },
+    { id:'m_tree',       name:'나무괴물',  layer:'ground', attackLayer:'ground', hp:40, atk:5,   spd:2, atkCooldown:1.5,  range:2, cost:0, size:L, color:0x886644 },
+    { id:'m_alien_tall', name:'키큰에일리언', layer:'ground', attackLayer:'both', hp:26, atk:7,  spd:4, atkCooldown:0.75, range:4, cost:0, size:L, color:0x88ddaa, ranged:true },
+    { id:'m_cthulhu',    name:'크툴루',    layer:'air',    attackLayer:'both',   hp:35, atk:8,   spd:3, atkCooldown:1.0,  range:5, cost:0, size:L, color:0x336688, ranged:true },
+    { id:'m_yellowdragon',name:'황룡',     layer:'air',    attackLayer:'both',   hp:50, atk:10,  spd:4, atkCooldown:0.5,  range:6, cost:0, size:L, color:0xffcc00, ranged:true },
+  ];
+  for (const def of defs) (ANIMALS as Record<string, AnimalDef>)[def.id] = def;
+})();
+
+let monsterModelsLoading = false;
+function loadMonsterModels(): Promise<void> {
+  if (monsterModelsLoading) return Promise.resolve();
+  monsterModelsLoading = true;
+  const loader = new GLTFLoader();
+  const base = `${import.meta.env.BASE_URL}cute-monster/glTF/`;
+  const tasks = Object.entries(MONSTER_FILE_MAP).map(([id, file]) =>
+    new Promise<void>(resolve => {
+      loader.load(`${base}${file}.gltf`, gltf => {
+        modelTemplates[id] = { scene: gltf.scene, animations: gltf.animations };
+        resolve();
+      }, undefined, () => resolve());
+    })
+  );
+  return Promise.all(tasks).then(() => {});
+}
+
 // ─── Boss Spawn Effects ───────────────────────────────────────────────────────
 interface BossSpawnEffect { ring: THREE.Mesh; mat: THREE.MeshBasicMaterial; age: number; }
 const bossSpawnEffects: BossSpawnEffect[] = [];
@@ -694,13 +750,15 @@ const CURRENCY_MC = 1;   // multiple-choice correct
 const CURRENCY_TYPE = 3; // typing correct
 const ROUND_DURATION = 60; // seconds per round
 
-// 1P AI spawn tables per round [animalId, weight]
+// 1P AI spawn tables per round (cute-monster)
 const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
-  { interval: 5.0, pool: ['penguin','chick','crab','mole'] },
-  { interval: 4.0, pool: ['penguin','dog','cat','mole','lion'] },
-  { interval: 3.5, pool: ['dog','lion','eagle','monkey','deer'] },
-  { interval: 3.0, pool: ['lion','elephant','eagle','monkey','polar'] },
-  { interval: 2.5, pool: ['lion','elephant','eagle','monkey','tiger','polar','mole'] },
+  { interval: 5.0, pool: ['m_chicken','m_bee','m_mushroom','m_penguin'] },
+  { interval: 4.5, pool: ['m_crab','m_bat','m_pig','m_ghost','m_chicken'] },
+  { interval: 4.0, pool: ['m_panda','m_deer','m_alien','m_skull','m_bat'] },
+  { interval: 3.5, pool: ['m_greendemon','m_cyclops','m_cactus','m_demon','m_ghost'] },
+  { interval: 3.0, pool: ['m_yeti','m_tree','m_alien_tall','m_cyclops','m_demon'] },
+  { interval: 2.5, pool: ['m_cthulhu','m_yellowdragon','m_yeti','m_alien_tall','m_tree'] },
+  { interval: 2.0, pool: ['m_cthulhu','m_yellowdragon','m_demon','m_cyclops','m_cthulhu'] },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -944,6 +1002,12 @@ const MODEL_SCALE: Record<string, number> = {
   crab: 0.55, deer: 1.05, dog: 0.85, fox: 0.7, giraffe: 1.5,
   hog: 0.9, koala: 0.8, panda: 0.9, penguin: 0.65, pig: 0.85,
   polar: 1.1, tiger: 1.2,
+  // cute-monster
+  m_chicken:0.5, m_bee:0.5, m_mushroom:0.5, m_crab:0.5, m_bat:0.5,
+  m_penguin:0.5, m_pig:0.65, m_panda:0.65, m_deer:0.65, m_alien:0.65,
+  m_ghost:0.65, m_skull:0.65, m_greendemon:0.65, m_cyclops:0.65,
+  m_cactus:0.65, m_demon:0.65, m_yeti:0.85, m_tree:0.85,
+  m_alien_tall:0.85, m_cthulhu:0.85, m_yellowdragon:0.85,
 };
 
 function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
@@ -1308,6 +1372,10 @@ function playAnim(u: UnitSim, name: string) {
   if (bossDef) {
     if (name === 'walk' || name === 'static') clipName = bossDef.animWalk;
     else if (name === 'eat') clipName = bossDef.animAtk;
+  } else if (u.animalId.startsWith('m_')) {
+    const mDef = ANIMALS[u.animalId];
+    if (name === 'walk' || name === 'static') clipName = mDef?.layer === 'air' ? 'Flying' : 'Walk';
+    else if (name === 'eat') clipName = 'Bite_Front';
   }
   if (u.currentAnim === clipName) return;
   // Get clips from boss template or regular model template
@@ -1879,6 +1947,7 @@ async function startBattle() {
     // 보스 초기화 + 모델 로딩
     resetBossSpawned();
     loadBossModels();
+    loadMonsterModels();
   }
 
   multiplayerTimeLeft = 120;
