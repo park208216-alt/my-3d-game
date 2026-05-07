@@ -1530,6 +1530,9 @@ document.body.insertAdjacentHTML('beforeend', `
   .animal-card .aname{font-size:15px;font-weight:700;margin-bottom:6px;}
   .animal-card .astat{opacity:0.75;line-height:1.6;}
   #screen-deck{background:linear-gradient(rgba(5,18,3,0.78),rgba(5,18,3,0.78)),url('${import.meta.env.BASE_URL}ui/PNG/menu/bg.png') center/cover no-repeat;}
+  @keyframes chest-shake{0%,100%{transform:translateX(0) rotate(0deg);}20%{transform:translateX(-8px) rotate(-3deg);}40%{transform:translateX(8px) rotate(3deg);}60%{transform:translateX(-6px) rotate(-2deg);}80%{transform:translateX(6px) rotate(2deg);}}
+  .chest-shaking{animation:chest-shake 0.55s ease-in-out;}
+  .chest-card{background:rgba(10,25,6,0.82);border:2px solid rgba(80,200,60,0.2);border-radius:16px;padding:14px 10px;display:flex;flex-direction:column;align-items:center;gap:10px;}
   @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 
@@ -1588,7 +1591,7 @@ document.body.insertAdjacentHTML('beforeend', `
     <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">혼자서 플레이</button>
     <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">둘이서 플레이</button>
     <button class="btn full-btn" id="btn-home-deck">덱 구성</button>
-    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">상점 (준비 중)</button>
+    <button class="btn full-btn" id="btn-home-shop" style="font-size:14px;">상점</button>
     <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">진행상황 저장하기</button>
   </div>
 </div>
@@ -1605,13 +1608,23 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
 </div>
 
-<!-- SHOP (placeholder) -->
-<div id="screen-shop" class="screen hidden">
-  <div class="jui-panel" style="align-items:center;text-align:center;">
-    <h2 style="margin:0 0 10px;">상점</h2>
-    <p style="opacity:0.55;margin:0 0 18px;">준비 중입니다.</p>
-    <button class="btn" id="btn-shop-back">← 돌아가기</button>
+<!-- SHOP -->
+<div id="screen-shop" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;">
+  <div style="width:100%;max-width:700px;padding:20px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:20px;">
+    <div style="width:100%;display:flex;justify-content:space-between;align-items:center;">
+      <button class="btn" id="btn-shop-back" style="padding:10px 18px;font-size:14px;">← 돌아가기</button>
+      <h2 style="margin:0;">상점</h2>
+      <span id="shop-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
+    </div>
+    <div id="shop-chest-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;width:100%;max-width:480px;"></div>
   </div>
+</div>
+
+<!-- CHEST OPENING OVERLAY -->
+<div id="chest-overlay" class="hidden" style="position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.90);flex-direction:column;align-items:center;justify-content:center;display:flex;">
+  <img id="chest-anim-img" src="" alt="" style="width:280px;height:auto;transition:opacity 0.18s;">
+  <div id="chest-overlay-msg" style="margin-top:16px;font-size:18px;font-weight:700;color:#fff;min-height:28px;text-shadow:0 2px 8px rgba(0,0,0,0.6);"></div>
+  <button id="btn-chest-close" class="btn primary" style="margin-top:20px;opacity:0;pointer-events:none;padding:12px 36px;">닫기</button>
 </div>
 
 <!-- 2P LOBBY -->
@@ -2423,6 +2436,84 @@ socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
   endBattle(iWin ? 'win' : 'lose');
 });
 
+// ─── Chest Shop ───────────────────────────────────────────────────────────────
+const CHEST_GRADES = [
+  { grade: 'D', label: 'D등급', price: 3,  borderColor: 'rgba(160,160,160,0.5)', labelColor: '#bbb' },
+  { grade: 'C', label: 'C등급', price: 8,  borderColor: 'rgba(40,160,255,0.5)',  labelColor: '#4af' },
+  { grade: 'B', label: 'B등급', price: 15, borderColor: 'rgba(160,80,255,0.5)', labelColor: '#b6f' },
+  { grade: 'A', label: 'A등급', price: 30, borderColor: 'rgba(255,220,0,0.5)',  labelColor: '#fd0' },
+];
+
+function buildShopChests() {
+  const B = import.meta.env.BASE_URL;
+  const grid = $('shop-chest-grid');
+  grid.innerHTML = '';
+  ($('shop-gold') as HTMLElement).textContent = `${playerGold} G`;
+  for (const { grade, label, price, borderColor, labelColor } of CHEST_GRADES) {
+    const card = document.createElement('div');
+    card.className = 'chest-card';
+    card.style.borderColor = borderColor;
+    const canBuy = playerGold >= price;
+    card.innerHTML = `
+      <div style="font-size:16px;font-weight:900;color:${labelColor};">${label}</div>
+      <img src="${B}ui/chest/chest_closed_${grade}.png" alt="${label}" style="width:100%;max-width:190px;height:auto;">
+      <div style="font-size:14px;color:#ffd060;font-weight:700;">${price} G</div>
+      <button class="btn primary full-btn" data-grade="${grade}" data-price="${price}" style="font-size:14px;padding:10px;${canBuy ? '' : 'opacity:0.4;pointer-events:none;'}">열기</button>
+    `;
+    grid.appendChild(card);
+  }
+  grid.querySelectorAll('button[data-grade]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const grade = (btn as HTMLElement).dataset.grade!;
+      const price = parseInt((btn as HTMLElement).dataset.price!);
+      triggerChestOpen(grade, price);
+    });
+  });
+}
+
+function triggerChestOpen(grade: string, price: number) {
+  if (playerGold < price) return;
+  const B = import.meta.env.BASE_URL;
+  const overlay = $('chest-overlay');
+  const img = $('chest-anim-img') as HTMLImageElement;
+  const msg = $('chest-overlay-msg') as HTMLElement;
+  const closeBtn = $('btn-chest-close') as HTMLButtonElement;
+
+  playerGold -= price;
+
+  img.src = `${B}ui/chest/chest_closed_${grade}.png`;
+  img.style.opacity = '1';
+  msg.textContent = '';
+  closeBtn.style.opacity = '0';
+  closeBtn.style.pointerEvents = 'none';
+  overlay.classList.remove('hidden');
+
+  img.classList.add('chest-shaking');
+  setTimeout(() => {
+    img.classList.remove('chest-shaking');
+    img.style.opacity = '0';
+    setTimeout(() => {
+      img.src = `${B}ui/chest/chest_open_glow_${grade}.png`;
+      img.style.opacity = '1';
+      setTimeout(() => {
+        img.style.opacity = '0';
+        setTimeout(() => {
+          img.src = `${B}ui/chest/chest_open_${grade}.png`;
+          img.style.opacity = '1';
+          closeBtn.style.opacity = '1';
+          closeBtn.style.pointerEvents = 'auto';
+        }, 200);
+      }, 700);
+    }, 200);
+  }, 600);
+}
+
+$('btn-chest-close').addEventListener('click', () => {
+  $('chest-overlay').classList.add('hidden');
+  buildShopChests();
+  updateHomeDisplay();
+});
+
 // ─── Button Handlers ──────────────────────────────────────────────────────────
 
 // Initial
@@ -2481,6 +2572,7 @@ $('btn-home-save').addEventListener('click', async () => {
 // Deck
 $('btn-deck-back').addEventListener('click', () => showScreen('home'));
 $('btn-shop-back').addEventListener('click', () => showScreen('home'));
+$('btn-home-shop').addEventListener('click', () => { buildShopChests(); showScreen('shop'); });
 
 // Lobby
 $('btn-lobby-back').addEventListener('click', () => {
