@@ -1294,6 +1294,8 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
     return;
   }
   if (nearest) { u.state = 'moving'; u.z += dir * def.spd * dt; return; }
+  // near base: keep moving on ground instead of going back underground
+  if (baseDist <= 6) { u.state = 'moving'; u.z += dir * 3 * dt; return; }
   u.state = 'underground';
 }
 

@@ -78,7 +78,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   mole: {
     id: 'mole', name: '비버',
     layer: 'underground', attackLayer: 'ground',
-    hp: 13, atk: 1, spd: 10, atkCooldown: 0.6, range: 1,
+    hp: 13, atk: 1, spd: 3, atkCooldown: 0.6, range: 1,
     cost: 2, size: 0.33, color: 0x7a5c40,
   },
   koala: {
