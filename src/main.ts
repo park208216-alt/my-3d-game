@@ -1970,9 +1970,15 @@ function checkBossThresholds() {
       console.log(`[Boss] threshold triggered! p2Base.hp=${hp} <= ${threshold}, spawning ${bossId}`);
       bossSpawned[bossId] = true;
       spawnBoss(bossId);
-      // 보스 등장 이펙트 + p1 기지에 20 데미지
+      // 보스 등장 이펙트 + 적 기지 주변 p1 유닛에 20 데미지 (공중/지상 모두)
       triggerBossSpawnEffect(p2Base.z);
-      if (p1Base) p1Base.hp = Math.max(0, p1Base.hp - 20);
+      const SPAWN_BLAST_RADIUS = 8;
+      for (const u of units) {
+        if (u.side === 'p1' && u.state !== 'dead' && Math.abs(u.z - p2Base.z) <= SPAWN_BLAST_RADIUS) {
+          u.hp = Math.max(0, u.hp - 20);
+          if (u.hp <= 0) u.state = 'dead';
+        }
+      }
       // 드래곤 등장 시 적 기지 옆에 발리스타 + 박격포 설치
       if (bossId === 'dragon') {
         placeSiege('ballista', 'p2');
