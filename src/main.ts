@@ -1624,7 +1624,7 @@ document.body.insertAdjacentHTML('beforeend', `
 </div>
 
 <!-- CHEST OPENING OVERLAY -->
-<div id="chest-overlay" class="hidden" style="position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.90);flex-direction:column;align-items:center;justify-content:center;display:flex;gap:0;">
+<div id="chest-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.90);flex-direction:column;align-items:center;justify-content:center;gap:0;">
   <img id="chest-anim-img" src="" alt="" style="width:260px;height:auto;transition:opacity 0.18s;">
   <div id="chest-result-card" style="display:none;margin-top:18px;"></div>
   <button id="btn-chest-close" class="btn primary" style="margin-top:20px;opacity:0;pointer-events:none;padding:12px 36px;">닫기</button>
@@ -2524,7 +2524,7 @@ function triggerChestOpen(grade: string, price: number) {
   resultCard.innerHTML = '';
   closeBtn.style.opacity = '0';
   closeBtn.style.pointerEvents = 'none';
-  overlay.classList.remove('hidden');
+  overlay.style.display = 'flex';
 
   // 1. 흔들기
   img.classList.add('chest-shaking');
@@ -2551,7 +2551,7 @@ function triggerChestOpen(grade: string, price: number) {
 }
 
 $('btn-chest-close').addEventListener('click', () => {
-  $('chest-overlay').classList.add('hidden');
+  $('chest-overlay').style.display = 'none';
   buildShopChests();
   updateHomeDisplay();
 });
