@@ -768,7 +768,6 @@ let loggedInUsername = '';
 let loggedInUserId = '';
 let playerGold = 0;
 let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
-const GOLD_PER_WIN = 10;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
 
@@ -1447,6 +1446,14 @@ function syncUnitMeshes() {
   }
 
   for (const u of toRemove) {
+    if (gameMode === '1p' && u.side === 'p2' && battleActive) {
+      if (u.animalId in BOSS_DEFS) {
+        p1BossesKilled++;
+        if (u.animalId === 'dragon') p1DragonKilled = true;
+      } else if (u.animalId.startsWith('m_')) {
+        p1MonstersKilled++;
+      }
+    }
     removeUnitMeshes(u);
     units = units.filter(x => x.id !== u.id);
   }
@@ -1480,6 +1487,11 @@ let multiplayerTimeLeft = 120;
 let currentWord = wordList[0];
 let currentChoices: string[] = [];
 let correctIdx = 0;
+// ─── Battle Stats (for result screen) ────────────────────────────────────────
+let p1MonstersKilled = 0;
+let p1BossesKilled = 0;
+let p1DragonKilled = false;
+let correctWords: { en: string; ko: string }[] = [];
 let isTypingMode = false;
 
 // 2P socket state
@@ -1517,6 +1529,7 @@ document.body.insertAdjacentHTML('beforeend', `
   .animal-card{padding:12px 16px;border-radius:12px;border:2px solid rgba(80,200,60,0.2);background:rgba(12,35,8,0.75);min-width:110px;text-align:center;font-size:13px;cursor:default;}
   .animal-card .aname{font-size:15px;font-weight:700;margin-bottom:6px;}
   .animal-card .astat{opacity:0.75;line-height:1.6;}
+  #screen-deck{background:linear-gradient(rgba(5,18,3,0.78),rgba(5,18,3,0.78)),url('${import.meta.env.BASE_URL}ui/PNG/menu/bg.png') center/cover no-repeat;}
   @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 
@@ -1616,10 +1629,13 @@ document.body.insertAdjacentHTML('beforeend', `
 </div>
 
 <!-- RESULT -->
-<div id="screen-result" class="screen hidden">
-  <img id="result-header-img" src="" alt="" style="max-width:340px;width:88%;margin-bottom:14px;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.55));">
-  <div id="result-gold" style="font-size:16px;color:#ffd060;font-weight:700;margin-bottom:20px;min-height:22px;text-shadow:0 2px 6px rgba(0,0,0,0.6);"></div>
-  <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">홈으로</button>
+<div id="screen-result" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;">
+  <div style="width:100%;max-width:520px;padding:24px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:14px;">
+    <img id="result-header-img" src="" alt="" style="max-width:300px;width:80%;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.55));">
+    <div id="result-stats" style="width:100%;display:none;"></div>
+    <div id="result-words" style="width:100%;display:none;"></div>
+    <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">홈으로</button>
+  </div>
 </div>
 
 <!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
@@ -1904,6 +1920,10 @@ $('btn-cammode').addEventListener('click', () => {
 function clearBattle() {
   for (const u of [...units]) removeUnitMeshes(u);
   units = [];
+  p1MonstersKilled = 0;
+  p1BossesKilled = 0;
+  p1DragonKilled = false;
+  correctWords = [];
   if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
   if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
   for (const m of baseTowerMeshes) scene.remove(m);
@@ -2113,12 +2133,65 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
   resScreen.style.backgroundSize = 'cover';
   resScreen.style.backgroundPosition = 'center';
   ($('result-header-img') as HTMLImageElement).src = `${B}ui/PNG/${isWin ? 'you_win' : 'you_lose'}/header.png`;
-  let goldMsg = '';
-  if (result === 'win' && gameMode === '1p') {
-    playerGold += GOLD_PER_WIN;
-    goldMsg = `+${GOLD_PER_WIN} G 획득!`;
+
+  // Gold breakdown (1P only)
+  const statsEl = $('result-stats') as HTMLElement;
+  const wordsEl = $('result-words') as HTMLElement;
+
+  if (gameMode === '1p') {
+    const GOLD_PER_MONSTER = 1;
+    const GOLD_PER_BOSS = 5;
+    const GOLD_DRAGON_BONUS = 10;
+    const GOLD_PER_ROUND = 2;
+    const GOLD_WIN_BONUS = 20;
+    const gMonster = p1MonstersKilled * GOLD_PER_MONSTER;
+    const gBoss = p1BossesKilled * GOLD_PER_BOSS;
+    const gDragon = p1DragonKilled ? GOLD_DRAGON_BONUS : 0;
+    const gRound = round * GOLD_PER_ROUND;
+    const gWin = result === 'win' ? GOLD_WIN_BONUS : 0;
+    const gTotal = gMonster + gBoss + gDragon + gRound + gWin;
+    playerGold += gTotal;
+
+    const row = (label: string, val: string) =>
+      `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
+        <span style="opacity:0.85;">${label}</span><span style="color:#ffd060;font-weight:700;">${val}</span>
+      </div>`;
+
+    statsEl.style.display = 'block';
+    statsEl.innerHTML = `
+      <div style="background:rgba(10,25,6,0.82);border:1px solid rgba(80,200,60,0.3);border-radius:14px;padding:14px 18px;font-size:14px;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:#a0ffb8;">골드 획득 내역</div>
+        ${row(`몬스터 처치 (${p1MonstersKilled}마리 × ${GOLD_PER_MONSTER}G)`, `${gMonster}G`)}
+        ${row(`보스 처치 (${p1BossesKilled}마리 × ${GOLD_PER_BOSS}G)`, `${gBoss}G`)}
+        ${p1DragonKilled ? row('드래곤 처치 보너스', `+${gDragon}G`) : ''}
+        ${row(`생존 라운드 (${round}라운드 × ${GOLD_PER_ROUND}G)`, `${gRound}G`)}
+        ${gWin > 0 ? row('클리어 보너스', `+${gWin}G`) : ''}
+        <div style="display:flex;justify-content:space-between;padding:8px 0 2px;font-size:16px;font-weight:900;">
+          <span>합계</span><span style="color:#ffd060;">+${gTotal}G</span>
+        </div>
+      </div>`;
+  } else {
+    statsEl.style.display = 'none';
   }
-  ($('result-gold') as HTMLElement).textContent = goldMsg;
+
+  // Correct words
+  if (correctWords.length > 0) {
+    wordsEl.style.display = 'block';
+    const rows = correctWords.map(w =>
+      `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.07);font-size:13px;">
+        <span style="color:#a8e6ff;font-weight:700;min-width:110px;">${w.en}</span>
+        <span style="opacity:0.8;">${w.ko}</span>
+      </div>`
+    ).join('');
+    wordsEl.innerHTML = `
+      <div style="background:rgba(10,25,6,0.82);border:1px solid rgba(80,200,60,0.3);border-radius:14px;padding:14px 18px;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:#a0ffb8;">맞춘 단어 (${correctWords.length}개)</div>
+        ${rows}
+      </div>`;
+  } else {
+    wordsEl.style.display = 'none';
+  }
+
   showScreen('result');
 }
 
@@ -2159,6 +2232,7 @@ function submitChoice(idx: number) {
   if (!battleActive) return;
   if (idx === correctIdx) {
     addCurrency(CURRENCY_MC);
+    correctWords.push({ en: currentWord.english, ko: currentWord.korean });
     pickNewWord();
   } else {
     addCurrency(-1);
@@ -2196,6 +2270,7 @@ function exitTypingMode() {
   const correct = currentWord.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
   if (correct) {
     addCurrency(CURRENCY_TYPE);
+    correctWords.push({ en: currentWord.english, ko: currentWord.korean });
     pickNewWord();
     (e.target as HTMLInputElement).value = '';
     (e.target as HTMLInputElement).focus();
