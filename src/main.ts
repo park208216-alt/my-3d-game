@@ -117,7 +117,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
     modelScale: 0.0424, collisionSize: 3.0, // 고정 15유닛 (FBX 원본 353.95 × 0.0424 ≈ 15)
     aoe: 3,
-    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
+    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack', // Attack2 아님, 고정
   },
 };
 
