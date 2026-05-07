@@ -1273,7 +1273,7 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
 
   if (u.state === 'underground') {
     const nearEnemy = groundEnemies.find(e => Math.abs(e.z - u.z) <= MOLE_SURFACE_DETECT);
-    if (nearEnemy || baseDist <= def.range) { u.state = 'moving'; }
+    if (nearEnemy || baseDist <= 6) { u.state = 'moving'; }
     else { u.z += dir * def.spd * dt; }
     return;
   }

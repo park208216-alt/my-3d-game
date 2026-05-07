@@ -38,7 +38,7 @@ export const ANIMALS: Record<string, AnimalDef> = {
   bee: {
     id: 'bee', name: '벌',
     layer: 'air', attackLayer: 'both',
-    hp: 5, atk: 1, spd: 10, atkCooldown: 0.3, range: 4,
+    hp: 5, atk: 0.3, spd: 10, atkCooldown: 0.3, range: 4,
     cost: 1, size: 0.15, color: 0xffcc00,
     stinger: true,
   },
