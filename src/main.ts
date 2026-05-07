@@ -692,7 +692,7 @@ const CURRENCY_MAX = 15;
 const CURRENCY_AUTO_INTERVAL = 2; // seconds
 const CURRENCY_MC = 1;   // multiple-choice correct
 const CURRENCY_TYPE = 3; // typing correct
-const ROUND_DURATION = 30; // seconds per round
+const ROUND_DURATION = 60; // seconds per round
 
 // 1P AI spawn tables per round [animalId, weight]
 const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
@@ -1272,8 +1272,8 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
   const baseDist = Math.abs(base.z - u.z);
 
   if (u.state === 'underground') {
-    const nearEnemy = groundEnemies.find(e => Math.abs(e.z - u.z) <= MOLE_SURFACE_DETECT);
-    if (nearEnemy || baseDist <= 6) { u.state = 'moving'; }
+    // surface only near the base — ignore ground enemies entirely
+    if (baseDist <= 6) { u.state = 'moving'; }
     else { u.z += dir * def.spd * dt; }
     return;
   }
@@ -2005,13 +2005,10 @@ function step1PAI(dt: number) {
   }
 
   if (roundTimer <= 0) {
-    if (round >= AI_ROUNDS.length) {
-      endBattle('win');
-    } else {
-      round++;
-      roundTimer = ROUND_DURATION;
-      aiSpawnTimer = AI_ROUNDS[Math.min(round - 1, AI_ROUNDS.length - 1)].interval;
-    }
+    // advance to next round (no win by timer — only base destruction wins)
+    if (round < AI_ROUNDS.length) round++;
+    roundTimer = ROUND_DURATION;
+    aiSpawnTimer = AI_ROUNDS[Math.min(round - 1, AI_ROUNDS.length - 1)].interval;
   }
 
   checkBossThresholds();
