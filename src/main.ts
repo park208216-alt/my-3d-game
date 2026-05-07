@@ -115,7 +115,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
-    modelScale: 0.0177, collisionSize: 3.0,
+    modelScale: 0.0565, collisionSize: 3.0,
     aoe: 3,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
@@ -1972,7 +1972,7 @@ function checkBossThresholds() {
       spawnBoss(bossId);
       // 보스 등장 이펙트 + 적 기지 주변 p1 유닛에 20 데미지 (공중/지상 모두)
       triggerBossSpawnEffect(p2Base.z);
-      const SPAWN_BLAST_RADIUS = 8;
+      const SPAWN_BLAST_RADIUS = 16;
       for (const u of units) {
         if (u.side === 'p1' && u.state !== 'dead' && Math.abs(u.z - p2Base.z) <= SPAWN_BLAST_RADIUS) {
           u.hp = Math.max(0, u.hp - 20);
