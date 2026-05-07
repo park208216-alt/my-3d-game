@@ -1522,17 +1522,17 @@ document.body.insertAdjacentHTML('beforeend', `
 
 <!-- INITIAL -->
 <div id="screen-initial" class="screen">
-  <div class="jui-title">🦁 Zoo Battle</div>
+  <div class="jui-title">Zoo Battle</div>
   <div style="display:flex;flex-direction:column;align-items:center;gap:14px;width:248px;">
-    <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">▶ 시작하기</button>
-    <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">🔑 로그인 (진행상황 불러오기)</button>
+    <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">시작하기</button>
+    <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">로그인 (진행상황 불러오기)</button>
   </div>
 </div>
 
 <!-- LOGIN -->
 <div id="screen-login" class="screen hidden">
   <div class="jui-panel">
-    <h2 style="text-align:center;margin-bottom:4px;">🔑 로그인</h2>
+    <h2 style="text-align:center;margin-bottom:4px;">로그인</h2>
     <input class="field" id="in-login-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-login-pw" type="password" placeholder="비밀번호" autocomplete="current-password">
     <div id="login-error" style="color:#ff9090;font-size:13px;min-height:18px;text-align:center;"></div>
@@ -1545,8 +1545,8 @@ document.body.insertAdjacentHTML('beforeend', `
 <!-- SIGNUP -->
 <div id="screen-signup" class="screen hidden">
   <div class="jui-panel">
-    <h2 style="text-align:center;margin-bottom:4px;">✏️ 아이디 생성</h2>
-    <div id="signup-hint" style="display:none;background:rgba(65,193,255,0.12);border:1px solid rgba(65,193,255,0.35);border-radius:10px;padding:10px 12px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.5;">아이디를 만들면 현재 덱과 골드가<br>자동으로 저장됩니다 💾</div>
+    <h2 style="text-align:center;margin-bottom:4px;">아이디 생성</h2>
+    <div id="signup-hint" style="display:none;background:rgba(65,193,255,0.12);border:1px solid rgba(65,193,255,0.35);border-radius:10px;padding:10px 12px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.5;">아이디를 만들면 현재 덱과 골드가<br>자동으로 저장됩니다</div>
     <input class="field" id="in-signup-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-signup-pw1" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password">
     <input class="field" id="in-signup-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
@@ -1568,22 +1568,22 @@ document.body.insertAdjacentHTML('beforeend', `
 <div id="screen-home" class="screen hidden">
   <div style="position:absolute;top:0;left:0;right:0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:rgba(10,28,5,0.78);border-bottom:1px solid rgba(80,200,60,0.28);">
     <span id="home-username" style="font-size:14px;color:#a0ffb8;font-weight:700;">Guest</span>
-    <span id="home-gold" style="font-size:14px;color:#ffd060;font-weight:700;">💰 0</span>
+    <span id="home-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
   </div>
-  <div class="jui-title">🦁 Zoo Battle</div>
+  <div class="jui-title">Zoo Battle</div>
   <div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:248px;">
-    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">🎮 혼자서 플레이</button>
-    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">👥 둘이서 플레이</button>
-    <button class="btn full-btn" id="btn-home-deck">📋 덱 구성</button>
-    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">🛒 상점 (준비 중)</button>
-    <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">💾 진행상황 저장하기</button>
+    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">혼자서 플레이</button>
+    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">둘이서 플레이</button>
+    <button class="btn full-btn" id="btn-home-deck">덱 구성</button>
+    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">상점 (준비 중)</button>
+    <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">진행상황 저장하기</button>
   </div>
 </div>
 
 <!-- DECK -->
 <div id="screen-deck" class="screen hidden" style="padding:16px;justify-content:flex-start;padding-top:28px;">
   <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;width:100%;max-width:640px;">
-    <h2 style="margin:0;flex:1;">📋 덱 구성</h2>
+    <h2 style="margin:0;flex:1;">덱 구성</h2>
     <span id="deck-count" style="font-size:14px;color:#a0ffb8;white-space:nowrap;font-weight:700;">0 / 6 선택</span>
   </div>
   <div id="deck-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;overflow-y:auto;width:100%;max-width:640px;flex:1;align-content:start;padding-bottom:8px;"></div>
@@ -1595,7 +1595,7 @@ document.body.insertAdjacentHTML('beforeend', `
 <!-- SHOP (placeholder) -->
 <div id="screen-shop" class="screen hidden">
   <div class="jui-panel" style="align-items:center;text-align:center;">
-    <h2 style="margin:0 0 10px;">🛒 상점</h2>
+    <h2 style="margin:0 0 10px;">상점</h2>
     <p style="opacity:0.55;margin:0 0 18px;">준비 중입니다.</p>
     <button class="btn" id="btn-shop-back">← 돌아가기</button>
   </div>
@@ -1604,10 +1604,10 @@ document.body.insertAdjacentHTML('beforeend', `
 <!-- 2P LOBBY -->
 <div id="screen-lobby2p" class="screen hidden">
   <div class="jui-panel" style="align-items:center;text-align:center;">
-    <h2 style="margin:0 0 14px;">👥 2인 대전 로비</h2>
+    <h2 style="margin:0 0 14px;">2인 대전 로비</h2>
     <input class="field" id="in-room" placeholder="방 코드 (예: BATTLE1)" style="margin-bottom:10px;text-align:center;">
     <div class="gap" style="margin-bottom:10px;justify-content:center;">
-      <button class="btn" id="btn-rndroom">🎲 랜덤 코드</button>
+      <button class="btn" id="btn-rndroom">랜덤 코드</button>
       <button class="btn primary" id="btn-joinroom">참가</button>
     </div>
     <div id="lobby-status" style="font-size:13px;opacity:0.8;min-height:20px;"></div>
@@ -1619,7 +1619,7 @@ document.body.insertAdjacentHTML('beforeend', `
 <div id="screen-result" class="screen hidden">
   <img id="result-header-img" src="" alt="" style="max-width:340px;width:88%;margin-bottom:14px;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.55));">
   <div id="result-gold" style="font-size:16px;color:#ffd060;font-weight:700;margin-bottom:20px;min-height:22px;text-shadow:0 2px 6px rgba(0,0,0,0.6);"></div>
-  <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">🏠 홈으로</button>
+  <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">홈으로</button>
 </div>
 
 <!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
@@ -1707,7 +1707,7 @@ function showScreen(s: Screen) {
 
 function updateHomeDisplay() {
   ($('home-username') as HTMLElement).textContent = loggedInUsername || 'Guest';
-  ($('home-gold') as HTMLElement).textContent = `💰 ${playerGold}`;
+  ($('home-gold') as HTMLElement).textContent = `${playerGold} G`;
 }
 
 showScreen('initial');
@@ -2116,7 +2116,7 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
   let goldMsg = '';
   if (result === 'win' && gameMode === '1p') {
     playerGold += GOLD_PER_WIN;
-    goldMsg = `+${GOLD_PER_WIN} 💰 골드 획득!`;
+    goldMsg = `+${GOLD_PER_WIN} G 획득!`;
   }
   ($('result-gold') as HTMLElement).textContent = goldMsg;
   showScreen('result');
