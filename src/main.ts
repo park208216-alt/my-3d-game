@@ -115,7 +115,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
-    modelScale: 0.0565, collisionSize: 3.0,
+    modelScale: 0.0177, collisionSize: 3.0,
     aoe: 3,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
@@ -1020,7 +1020,10 @@ function makeUnitMesh(def: AnimalDef, side: Side): THREE.Object3D {
     );
   }
 
-  const model = template.clone(true);
+  // SkinnedMesh (rigged) models need SkeletonUtils.clone to rebind bones correctly
+  const model = def.id.startsWith('m_')
+    ? skeletonClone(template) as THREE.Group
+    : template.clone(true);
   const s = MODEL_SCALE[def.id] ?? def.size;
   model.scale.set(s, s, s);
 
