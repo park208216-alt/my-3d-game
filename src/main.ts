@@ -1494,89 +1494,97 @@ document.body.insertAdjacentHTML('beforeend', `
 <style>
   *{box-sizing:border-box;}
   body{font-family:system-ui,sans-serif;color:#e8eefc;touch-action:manipulation;}
-  .screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(8,14,30,0.96);z-index:50;}
+  .screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:url('${import.meta.env.BASE_URL}ui/PNG/menu/bg.png') center/cover no-repeat;z-index:50;}
   .screen.hidden{display:none;}
-  .btn{padding:12px 28px;border-radius:12px;border:1px solid rgba(255,255,255,0.25);background:#2a4080;color:#e8eefc;font-size:16px;font-weight:700;cursor:pointer;transition:background 0.15s;}
-  .btn:hover{background:#3a55aa;}
-  .btn.primary{background:#41c1ff;color:#031523;}
-  .btn.primary:hover{background:#60d0ff;}
-  .btn.green{background:#2a7a4a;border-color:rgba(80,220,120,0.5);color:#a0ffb8;}
-  .btn.green:hover{background:#3a9a5a;}
-  .btn.danger{background:#c03030;}
-  .btn:disabled{opacity:0.4;cursor:not-allowed;}
-  h1{font-size:2.4em;margin:0 0 32px;letter-spacing:2px;}
-  h2{font-size:1.6em;margin:0 0 20px;}
-  input.field{padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.07);color:#e8eefc;font-size:15px;outline:none;width:240px;}
+  /* jungle panel */
+  .jui-panel{background:rgba(12,30,8,0.82);border:2px solid rgba(80,200,60,0.4);border-radius:18px;padding:28px 28px;width:100%;max-width:320px;display:flex;flex-direction:column;gap:10px;box-shadow:0 6px 40px rgba(0,0,0,0.65);}
+  /* buttons */
+  .btn{padding:12px 28px;border-radius:14px;border:2px solid rgba(60,180,40,0.5);background:linear-gradient(180deg,#3a7a20,#1e5010);color:#e8ffdc;font-size:16px;font-weight:700;cursor:pointer;transition:filter 0.12s;text-shadow:0 1px 3px rgba(0,0,0,0.6);box-shadow:0 3px 0 rgba(0,0,0,0.45),0 0 10px rgba(60,200,40,0.12);}
+  .btn:hover{filter:brightness(1.22);}
+  .btn.primary{background:linear-gradient(180deg,#52cc28,#2b8410);border-color:rgba(120,255,80,0.65);color:#fff;}
+  .btn.primary:hover{filter:brightness(1.15);}
+  .btn.green{background:linear-gradient(180deg,#3aaa50,#1a6030);border-color:rgba(80,220,120,0.5);color:#a0ffb8;}
+  .btn.green:hover{filter:brightness(1.2);}
+  .btn.danger{background:linear-gradient(180deg,#c04030,#8a1020);border-color:rgba(255,80,60,0.5);}
+  .btn:disabled{opacity:0.4;cursor:not-allowed;filter:none;}
+  .full-btn{width:100%;padding:14px;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer;transition:filter 0.12s;}
+  /* title */
+  .jui-title{font-size:3.4em;font-weight:900;color:#fff;text-shadow:0 2px 0 #1e5508,0 4px 14px rgba(0,0,0,0.75),0 0 36px rgba(80,230,40,0.55);letter-spacing:3px;margin:0 0 28px;text-align:center;}
+  h2{font-size:1.6em;margin:0 0 16px;text-shadow:0 2px 6px rgba(0,0,0,0.65);}
+  input.field{padding:10px 14px;border-radius:10px;border:1px solid rgba(80,200,60,0.45);background:rgba(255,255,255,0.10);color:#e8eefc;font-size:15px;outline:none;width:100%;}
+  input.field:focus{border-color:rgba(110,255,80,0.75);background:rgba(255,255,255,0.14);}
   .gap{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;}
-  .animal-card{padding:12px 16px;border-radius:12px;border:2px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);min-width:110px;text-align:center;font-size:13px;cursor:default;}
+  .animal-card{padding:12px 16px;border-radius:12px;border:2px solid rgba(80,200,60,0.2);background:rgba(12,35,8,0.75);min-width:110px;text-align:center;font-size:13px;cursor:default;}
   .animal-card .aname{font-size:15px;font-weight:700;margin-bottom:6px;}
   .animal-card .astat{opacity:0.75;line-height:1.6;}
-  .full-btn{width:100%;padding:14px;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;border:1px solid rgba(255,255,255,0.25);transition:background 0.15s;}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 
 <!-- INITIAL -->
 <div id="screen-initial" class="screen">
-  <h1>Zoo Battle</h1>
-  <div style="display:flex;flex-direction:column;align-items:center;gap:12px;width:220px;">
-    <button class="btn primary full-btn" id="btn-start" style="font-size:18px;">시작하기</button>
-    <button class="btn full-btn" id="btn-load-progress" style="background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.18);font-size:14px;padding:10px;">로그인 (진행상황 불러오기)</button>
+  <div class="jui-title">🦁 Zoo Battle</div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:14px;width:248px;">
+    <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">▶ 시작하기</button>
+    <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">🔑 로그인 (진행상황 불러오기)</button>
   </div>
 </div>
 
 <!-- LOGIN -->
 <div id="screen-login" class="screen hidden">
-  <h2 style="margin-bottom:20px;">로그인</h2>
-  <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px;">
+  <div class="jui-panel">
+    <h2 style="text-align:center;margin-bottom:4px;">🔑 로그인</h2>
     <input class="field" id="in-login-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-login-pw" type="password" placeholder="비밀번호" autocomplete="current-password">
-    <div id="login-error" style="color:#ff7070;font-size:13px;min-height:18px;text-align:center;"></div>
+    <div id="login-error" style="color:#ff9090;font-size:13px;min-height:18px;text-align:center;"></div>
     <button class="btn primary full-btn" id="btn-login">로그인</button>
-    <button class="btn green full-btn" id="btn-go-signup" style="font-size:15px;">아이디 생성</button>
-    <button class="btn full-btn" id="btn-login-back" style="background:transparent;border-color:rgba(255,255,255,0.15);font-size:13px;padding:10px;opacity:0.6;">← 돌아가기</button>
+    <button class="btn green full-btn" id="btn-go-signup">아이디 생성</button>
+    <button class="btn full-btn" id="btn-login-back" style="opacity:0.65;font-size:13px;padding:10px;">← 돌아가기</button>
   </div>
 </div>
 
 <!-- SIGNUP -->
 <div id="screen-signup" class="screen hidden">
-  <h2 style="margin-bottom:20px;">아이디 생성</h2>
-  <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px;">
+  <div class="jui-panel">
+    <h2 style="text-align:center;margin-bottom:4px;">✏️ 아이디 생성</h2>
     <div id="signup-hint" style="display:none;background:rgba(65,193,255,0.12);border:1px solid rgba(65,193,255,0.35);border-radius:10px;padding:10px 12px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.5;">아이디를 만들면 현재 덱과 골드가<br>자동으로 저장됩니다 💾</div>
     <input class="field" id="in-signup-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-signup-pw1" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password">
     <input class="field" id="in-signup-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
-    <div id="signup-error" style="color:#ff7070;font-size:13px;min-height:18px;text-align:center;"></div>
+    <div id="signup-error" style="color:#ff9090;font-size:13px;min-height:18px;text-align:center;"></div>
     <button class="btn primary full-btn" id="btn-signup-confirm">아이디 생성</button>
-    <button class="btn full-btn" id="btn-signup-back" style="background:transparent;border-color:rgba(255,255,255,0.15);font-size:13px;padding:10px;opacity:0.6;">← 돌아가기</button>
+    <button class="btn full-btn" id="btn-signup-back" style="opacity:0.65;font-size:13px;padding:10px;">← 돌아가기</button>
   </div>
 </div>
 
 <!-- LOADING -->
 <div id="screen-loading" class="screen hidden">
-  <div style="width:48px;height:48px;border:5px solid rgba(255,255,255,0.15);border-top-color:#41c1ff;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:20px;"></div>
-  <div style="color:#a0c8ff;font-size:16px;">불러오는 중...</div>
+  <div class="jui-panel" style="align-items:center;padding:32px 40px;">
+    <div style="width:48px;height:48px;border:5px solid rgba(255,255,255,0.15);border-top-color:#60d840;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+    <div style="color:#a0ffb8;font-size:16px;font-weight:700;margin-top:16px;">불러오는 중...</div>
+  </div>
 </div>
 
 <!-- HOME -->
 <div id="screen-home" class="screen hidden">
-  <div style="position:absolute;top:0;left:0;right:0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.35);border-bottom:1px solid rgba(255,255,255,0.08);">
-    <span id="home-username" style="font-size:14px;color:#adf;font-weight:700;">Guest</span>
+  <div style="position:absolute;top:0;left:0;right:0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:rgba(10,28,5,0.78);border-bottom:1px solid rgba(80,200,60,0.28);">
+    <span id="home-username" style="font-size:14px;color:#a0ffb8;font-weight:700;">Guest</span>
     <span id="home-gold" style="font-size:14px;color:#ffd060;font-weight:700;">💰 0</span>
   </div>
-  <h1 style="margin-bottom:24px;">Zoo Battle</h1>
-  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:220px;">
-    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">혼자서 플레이</button>
-    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">둘이서 플레이</button>
-    <button class="btn full-btn" id="btn-home-deck">덱</button>
-    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">상점 (준비 중)</button>
-    <button class="btn full-btn" id="btn-home-save" style="background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.18);font-size:13px;padding:10px;opacity:0.7;">진행상황 저장하기</button>
+  <div class="jui-title">🦁 Zoo Battle</div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:248px;">
+    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">🎮 혼자서 플레이</button>
+    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">👥 둘이서 플레이</button>
+    <button class="btn full-btn" id="btn-home-deck">📋 덱 구성</button>
+    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">🛒 상점 (준비 중)</button>
+    <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">💾 진행상황 저장하기</button>
   </div>
 </div>
 
 <!-- DECK -->
 <div id="screen-deck" class="screen hidden" style="padding:16px;justify-content:flex-start;padding-top:28px;">
   <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;width:100%;max-width:640px;">
-    <h2 style="margin:0;flex:1;">덱 구성</h2>
-    <span id="deck-count" style="font-size:14px;color:#adf;white-space:nowrap;">0 / 6 선택</span>
+    <h2 style="margin:0;flex:1;">📋 덱 구성</h2>
+    <span id="deck-count" style="font-size:14px;color:#a0ffb8;white-space:nowrap;font-weight:700;">0 / 6 선택</span>
   </div>
   <div id="deck-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;overflow-y:auto;width:100%;max-width:640px;flex:1;align-content:start;padding-bottom:8px;"></div>
   <div style="margin-top:14px;width:100%;max-width:640px;" class="gap">
@@ -1586,28 +1594,32 @@ document.body.insertAdjacentHTML('beforeend', `
 
 <!-- SHOP (placeholder) -->
 <div id="screen-shop" class="screen hidden">
-  <h2>상점</h2>
-  <p style="opacity:0.5;">준비 중입니다.</p>
-  <button class="btn" id="btn-shop-back">← 돌아가기</button>
+  <div class="jui-panel" style="align-items:center;text-align:center;">
+    <h2 style="margin:0 0 10px;">🛒 상점</h2>
+    <p style="opacity:0.55;margin:0 0 18px;">준비 중입니다.</p>
+    <button class="btn" id="btn-shop-back">← 돌아가기</button>
+  </div>
 </div>
 
 <!-- 2P LOBBY -->
 <div id="screen-lobby2p" class="screen hidden">
-  <h2>2인 대전 로비</h2>
-  <input class="field" id="in-room" placeholder="방 코드 (예: BATTLE1)" style="margin-bottom:10px;">
-  <div class="gap" style="margin-bottom:10px;">
-    <button class="btn" id="btn-rndroom">랜덤 코드</button>
-    <button class="btn primary" id="btn-joinroom">참가</button>
+  <div class="jui-panel" style="align-items:center;text-align:center;">
+    <h2 style="margin:0 0 14px;">👥 2인 대전 로비</h2>
+    <input class="field" id="in-room" placeholder="방 코드 (예: BATTLE1)" style="margin-bottom:10px;text-align:center;">
+    <div class="gap" style="margin-bottom:10px;justify-content:center;">
+      <button class="btn" id="btn-rndroom">🎲 랜덤 코드</button>
+      <button class="btn primary" id="btn-joinroom">참가</button>
+    </div>
+    <div id="lobby-status" style="font-size:13px;opacity:0.8;min-height:20px;"></div>
+    <button class="btn" id="btn-lobby-back" style="margin-top:14px;opacity:0.72;">← 돌아가기</button>
   </div>
-  <div id="lobby-status" style="font-size:13px;opacity:0.8;min-height:20px;"></div>
-  <button class="btn" id="btn-lobby-back" style="margin-top:16px;">← 돌아가기</button>
 </div>
 
 <!-- RESULT -->
 <div id="screen-result" class="screen hidden">
-  <h2 id="result-text">결과</h2>
-  <div id="result-gold" style="font-size:15px;color:#ffd060;font-weight:700;margin-bottom:12px;min-height:22px;"></div>
-  <button class="btn primary" id="btn-result-menu">홈으로</button>
+  <img id="result-header-img" src="" alt="" style="max-width:340px;width:88%;margin-bottom:14px;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.55));">
+  <div id="result-gold" style="font-size:16px;color:#ffd060;font-weight:700;margin-bottom:20px;min-height:22px;text-shadow:0 2px 6px rgba(0,0,0,0.6);"></div>
+  <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">🏠 홈으로</button>
 </div>
 
 <!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
@@ -2094,7 +2106,13 @@ function checkWinLose() {
 
 function endBattle(result: 'win' | 'lose' | 'draw') {
   battleActive = false;
-  $('result-text').textContent = result === 'win' ? '🎉 승리!' : result === 'lose' ? '💀 패배...' : '🤝 무승부!';
+  const B = import.meta.env.BASE_URL;
+  const isWin = result !== 'lose';
+  const resScreen = $('screen-result');
+  resScreen.style.backgroundImage = `url('${B}ui/PNG/${isWin ? 'you_win' : 'you_lose'}/bg.png')`;
+  resScreen.style.backgroundSize = 'cover';
+  resScreen.style.backgroundPosition = 'center';
+  ($('result-header-img') as HTMLImageElement).src = `${B}ui/PNG/${isWin ? 'you_win' : 'you_lose'}/header.png`;
   let goldMsg = '';
   if (result === 'win' && gameMode === '1p') {
     playerGold += GOLD_PER_WIN;
