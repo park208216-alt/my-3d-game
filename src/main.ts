@@ -1614,16 +1614,19 @@ document.body.insertAdjacentHTML('beforeend', `
     <div style="width:100%;display:flex;justify-content:space-between;align-items:center;">
       <button class="btn" id="btn-shop-back" style="padding:10px 18px;font-size:14px;">← 돌아가기</button>
       <h2 style="margin:0;">상점</h2>
-      <span id="shop-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span id="shop-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
+        <button id="btn-test-gold" style="font-size:11px;padding:4px 8px;border-radius:8px;border:1px solid rgba(255,220,0,0.4);background:rgba(255,220,0,0.12);color:#ffd060;cursor:pointer;">+100G 테스트</button>
+      </div>
     </div>
     <div id="shop-chest-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;width:100%;max-width:480px;"></div>
   </div>
 </div>
 
 <!-- CHEST OPENING OVERLAY -->
-<div id="chest-overlay" class="hidden" style="position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.90);flex-direction:column;align-items:center;justify-content:center;display:flex;">
-  <img id="chest-anim-img" src="" alt="" style="width:280px;height:auto;transition:opacity 0.18s;">
-  <div id="chest-overlay-msg" style="margin-top:16px;font-size:18px;font-weight:700;color:#fff;min-height:28px;text-shadow:0 2px 8px rgba(0,0,0,0.6);"></div>
+<div id="chest-overlay" class="hidden" style="position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.90);flex-direction:column;align-items:center;justify-content:center;display:flex;gap:0;">
+  <img id="chest-anim-img" src="" alt="" style="width:260px;height:auto;transition:opacity 0.18s;">
+  <div id="chest-result-card" style="display:none;margin-top:18px;"></div>
   <button id="btn-chest-close" class="btn primary" style="margin-top:20px;opacity:0;pointer-events:none;padding:12px 36px;">닫기</button>
 </div>
 
@@ -2437,6 +2440,39 @@ socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
 });
 
 // ─── Chest Shop ───────────────────────────────────────────────────────────────
+const CHEST_POOLS: Record<string, string[]> = {
+  D: ['bee','chick','crab','penguin'],
+  C: ['bee','chick','crab','penguin','bunny','eagle','fox','koala','mole'],
+  B: ['bunny','eagle','fox','koala','mole','cat','cow','deer','dog','monkey','panda','pig','giraffe','hog'],
+  A: ['cat','deer','dog','monkey','pig','giraffe','hog','lion','polar','tiger','elephant'],
+};
+
+function rollAnimal(grade: string): string {
+  const pool = CHEST_POOLS[grade] ?? CHEST_POOLS['D'];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function showResultCard(animalId: string, grade: string) {
+  const def = ANIMALS[animalId];
+  if (!def) return;
+  const hex = `#${def.color.toString(16).padStart(6,'0')}`;
+  const gradeColor: Record<string,string> = { D:'#bbb', C:'#4af', B:'#b6f', A:'#fd0' };
+  const gc = gradeColor[grade] ?? '#fff';
+  const card = $('chest-result-card') as HTMLElement;
+  card.innerHTML = `
+    <div style="background:rgba(8,20,5,0.95);border:2px solid ${gc};border-radius:18px;padding:20px 28px;min-width:220px;text-align:center;box-shadow:0 0 30px ${gc}44;">
+      <div style="font-size:12px;font-weight:700;color:${gc};letter-spacing:2px;margin-bottom:10px;">${grade}등급</div>
+      <div style="width:56px;height:56px;border-radius:50%;background:${hex};margin:0 auto 12px;box-shadow:0 0 18px ${hex}99;"></div>
+      <div style="font-size:24px;font-weight:900;color:#fff;margin-bottom:12px;">${def.name}</div>
+      <div style="display:flex;justify-content:center;gap:14px;font-size:13px;color:#a0ffb8;">
+        <span>HP ${def.hp}</span>
+        <span>ATK ${def.atk}</span>
+        <span>SPD ${def.spd}</span>
+      </div>
+    </div>`;
+  card.style.display = 'block';
+}
+
 const CHEST_GRADES = [
   { grade: 'D', label: 'D등급', price: 3,  borderColor: 'rgba(160,160,160,0.5)', labelColor: '#bbb' },
   { grade: 'C', label: 'C등급', price: 8,  borderColor: 'rgba(40,160,255,0.5)',  labelColor: '#4af' },
@@ -2476,30 +2512,36 @@ function triggerChestOpen(grade: string, price: number) {
   const B = import.meta.env.BASE_URL;
   const overlay = $('chest-overlay');
   const img = $('chest-anim-img') as HTMLImageElement;
-  const msg = $('chest-overlay-msg') as HTMLElement;
+  const resultCard = $('chest-result-card') as HTMLElement;
   const closeBtn = $('btn-chest-close') as HTMLButtonElement;
 
   playerGold -= price;
+  const rolledAnimal = rollAnimal(grade);
 
   img.src = `${B}ui/chest/chest_closed_${grade}.png`;
   img.style.opacity = '1';
-  msg.textContent = '';
+  resultCard.style.display = 'none';
+  resultCard.innerHTML = '';
   closeBtn.style.opacity = '0';
   closeBtn.style.pointerEvents = 'none';
   overlay.classList.remove('hidden');
 
+  // 1. 흔들기
   img.classList.add('chest-shaking');
   setTimeout(() => {
     img.classList.remove('chest-shaking');
     img.style.opacity = '0';
+    // 2. 빛나는 열린 상자
     setTimeout(() => {
       img.src = `${B}ui/chest/chest_open_glow_${grade}.png`;
       img.style.opacity = '1';
       setTimeout(() => {
         img.style.opacity = '0';
+        // 3. 열린 상자 + 결과 카드
         setTimeout(() => {
           img.src = `${B}ui/chest/chest_open_${grade}.png`;
           img.style.opacity = '1';
+          showResultCard(rolledAnimal, grade);
           closeBtn.style.opacity = '1';
           closeBtn.style.pointerEvents = 'auto';
         }, 200);
@@ -2512,6 +2554,11 @@ $('btn-chest-close').addEventListener('click', () => {
   $('chest-overlay').classList.add('hidden');
   buildShopChests();
   updateHomeDisplay();
+});
+
+$('btn-test-gold').addEventListener('click', () => {
+  playerGold += 100;
+  buildShopChests();
 });
 
 // ─── Button Handlers ──────────────────────────────────────────────────────────
