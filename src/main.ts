@@ -472,20 +472,18 @@ function loadEnvironment() {
 }
 loadEnvironment();
 
-function placePerimeterWalls(wallT: THREE.Group, cornerT: THREE.Group) {
-  // 타일 크기를 런타임에 측정
-  const wb = new THREE.Box3().setFromObject(wallT);
-  const wsz = new THREE.Vector3();
-  wb.getSize(wsz);
-  const tw = Math.max(wsz.x, wsz.z); // 타일 한 변 길이 (정방형 기준)
-
-  // 안쪽으로 당긴 외곽 좌표 (카메라 x=8 기준으로 x=±9)
-  const X0 = -9, X1 = 9;
-  const Z0 = -10, Z1 = FIELD_LEN + 10;
+function placePerimeterWalls(wallT: THREE.Group, _cornerT: THREE.Group) {
+  const wsz = new THREE.Box3().setFromObject(wallT).getSize(new THREE.Vector3());
+  const tw   = Math.max(wsz.x, wsz.z);
   const SCALE = 2.5;
+  const tileW = tw * SCALE;
 
-  const put = (tmpl: THREE.Group, x: number, z: number, ry: number) => {
-    const m = tmpl.clone(true);
+  // 벽 외곽 — 땅과 같은 범위
+  const X0 = -10, X1 = 10;
+  const Z0 = -10, Z1 = FIELD_LEN + 10;
+
+  const put = (x: number, z: number, ry: number) => {
+    const m = wallT.clone(true);
     m.position.set(x, 0, z);
     m.rotation.y = ry;
     m.scale.setScalar(SCALE);
@@ -493,37 +491,20 @@ function placePerimeterWalls(wallT: THREE.Group, cornerT: THREE.Group) {
     scene.add(m);
   };
 
-  const tileW = tw * SCALE;
-
-  // ─ 네 모서리 ─
-  put(cornerT, X0, Z0, -Math.PI / 2);
-  put(cornerT, X1, Z0,  0);
-  put(cornerT, X1, Z1,  Math.PI / 2);
-  put(cornerT, X0, Z1,  Math.PI);
-
-  // 끊김 없이 채우기: span을 tileW 기준 count로 나눈 뒤 균등 배치
+  // 전체 span을 균등 분배 → 모서리까지 빈틈 없이 채움
   const fillZ = (x: number, ry: number) => {
-    const span = Z1 - Z0;
-    const n = Math.max(1, Math.round(span / tileW) - 2);
-    const step = (span - 2 * tileW) / n;
-    for (let i = 0; i < n; i++)
-      put(wallT, x, Z0 + tileW + (i + 0.5) * step, ry);
+    const n = Math.round((Z1 - Z0) / tileW);
+    for (let i = 0; i < n; i++) put(x, Z0 + (i + 0.5) * (Z1 - Z0) / n, ry);
   };
   const fillX = (z: number, ry: number) => {
-    const span = X1 - X0;
-    const n = Math.max(1, Math.round(span / tileW) - 2);
-    const step = (span - 2 * tileW) / n;
-    for (let i = 0; i < n; i++)
-      put(wallT, X0 + tileW + (i + 0.5) * step, z, ry);
+    const n = Math.round((X1 - X0) / tileW);
+    for (let i = 0; i < n; i++) put(X0 + (i + 0.5) * (X1 - X0) / n, z, ry);
   };
 
-  // 긴쪽(z 방향) 벽: 180도 뒤집어 battlements 방향 수정
-  fillZ(X0,  0);           // 좌측: Math.PI → 0 (180° 회전)
-  fillZ(X1,  Math.PI);     // 우측: 0 → Math.PI (180° 회전)
-
-  // 짧은쪽(x 방향) 벽
-  fillX(Z0, -Math.PI / 2);
-  fillX(Z1,  Math.PI / 2);
+  fillZ(X0,  0);             // 좌측 긴 벽
+  fillZ(X1,  Math.PI);       // 우측 긴 벽
+  fillX(Z0, -Math.PI / 2);   // 하단 짧은 벽
+  fillX(Z1,  Math.PI / 2);   // 상단 짧은 벽
 }
 
 function updateTowerVisual(side: Side) {
@@ -2202,7 +2183,7 @@ renderer.domElement.addEventListener('pointercancel', () => {
 // ─── Field Geometry ───────────────────────────────────────────────────────────
 function buildField() {
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(32, FIELD_LEN + 20),
+    new THREE.PlaneGeometry(20, FIELD_LEN + 20),
     new THREE.MeshStandardMaterial({ color: 0x6db84a, roughness: 0.9 })
   );
   ground.rotation.x = -Math.PI / 2;
