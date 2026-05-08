@@ -263,9 +263,22 @@ function loadFoodModels(): Promise<void> {
         const box = new THREE.Box3().setFromObject(fbx);
         const sz = box.getSize(new THREE.Vector3());
         const maxDim = Math.max(sz.x, sz.y, sz.z);
-        // targetSize is the desired half-extent in game units → scale so longest axis ≈ 2*targetSize
         const scale = maxDim > 0 ? (targetSize * 2) / maxDim : 1;
         foodModelScales[id] = scale;
+        // FBX materials are lighting-dependent → add emissive so they look
+        // vibrant regardless of scene light angles
+        fbx.traverse((child: THREE.Object3D) => {
+          if (!(child as THREE.Mesh).isMesh) return;
+          const mats = Array.isArray((child as THREE.Mesh).material)
+            ? (child as THREE.Mesh).material as THREE.Material[]
+            : [(child as THREE.Mesh).material as THREE.Material];
+          mats.forEach(m => {
+            const mat = m as THREE.MeshPhongMaterial;
+            if (mat.emissive !== undefined && mat.color !== undefined) {
+              mat.emissive.copy(mat.color).multiplyScalar(0.55);
+            }
+          });
+        });
         console.log(`[Food] loaded ${file} | raw size:`, sz.x.toFixed(2), sz.y.toFixed(2), sz.z.toFixed(2), '| scale:', scale.toFixed(4));
         resolve();
       }, undefined, (err) => {
