@@ -1126,13 +1126,18 @@ function castTomato(side: Side) {
     const mesh = makeFoodProjMesh('tomato');
     mesh.position.copy(start);
     const delay = i * 100;
+    const tx = target.x, tz = target.z;
+    const dx = tx - start.x, dz = tz - start.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const tF = Math.max(0.9, dist / 12);
     setTimeout(() => {
       foodProjectiles.push({
-        food: 'tomato', effect: 'tomato_lob', type: 'homing_missile', side, mesh,
-        pos: start.clone(), vel: new THREE.Vector3(0, 1, forwardSign(side) * 10),
+        food: 'tomato', effect: 'tomato_lob', type: 'parabola_homing_enemy', side, mesh,
+        pos: start.clone(),
+        vel: new THREE.Vector3(dx / tF, 0.5 * 9.8 * tF, dz / tF),
         done: false, age: 0, damage: def.damage ?? 3,
         target,
-        spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 8,
+        spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 5,
       });
     }, delay);
   }
@@ -1198,26 +1203,25 @@ function castCarrot(side: Side) {
       damageOnContact: def.damage ?? 5,
     });
   }
-  // Part 2: One chain-bouncing carrot projectile that homes to each enemy
+  // Part 2: One chain-bouncing carrot projectile — parabola to nearest enemy,
+  // on hit chains to next unhit enemy with a fresh parabola arc
   const nearest = findEnemyClosestToBase(side);
   if (!nearest) return;
-  const startAngle = Math.atan2(baseZ - nearest.z, 0 - nearest.x);
-  const startPos = new THREE.Vector3(
-    nearest.x + Math.cos(startAngle) * 3,
-    1.8,
-    nearest.z + Math.sin(startAngle) * 3,
-  );
+  const startX = (Math.random() - 0.5) * 4;
+  const startPos = new THREE.Vector3(startX, 2.5, baseZ);
+  const dx0 = nearest.x - startX, dz0 = nearest.z - baseZ;
+  const dist0 = Math.sqrt(dx0 * dx0 + dz0 * dz0);
+  const tF0 = Math.max(0.7, dist0 / 14);
   const mesh = makeFoodProjMesh('carrot');
   mesh.position.copy(startPos);
   foodProjectiles.push({
     food: 'carrot', effect: 'carrot_spikes', type: 'carrot_chain', side, mesh,
-    pos: startPos.clone(), vel: new THREE.Vector3(0, 0, 0),
+    pos: startPos.clone(),
+    vel: new THREE.Vector3(dx0 / tF0, 0.5 * 9.8 * tF0, dz0 / tF0),
     done: false, age: 0, damage: (def.damage ?? 5) * 3,
     target: nearest,
     chainHitEnemies: new Set<string>(),
-    orbitAngle: startAngle,
-    orbitRadius: 3.0,
-    spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 14,
+    spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 10,
   });
 }
 function castEggplant(side: Side) {
@@ -1381,17 +1385,24 @@ function castEgg(side: Side) {
   const enemies = pickEnemiesNear(side, def.count, baseZ);
   for (let i = 0; i < def.count; i++) {
     const target = enemies[i] ?? null;
-    const offsetX = (Math.random() - 0.5) * 2;
-    const start = new THREE.Vector3(offsetX, 3 + Math.random() * 2, baseZ);
+    const offsetX = (Math.random() - 0.5) * 3;
+    const start = new THREE.Vector3(offsetX, 3, baseZ);
+    const tx = target ? target.x : offsetX;
+    const tz = target ? target.z : baseZ + forwardSign(side) * (8 + i * 3);
+    const dx = tx - offsetX, dz = tz - baseZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const tF = Math.max(0.8, dist / 12);
     const mesh = makeFoodProjMesh('egg');
     mesh.position.copy(start);
+    // Parabola + homing: gravity applied in movement, horizontal steering toward target
     foodProjectiles.push({
-      food: 'egg', effect: 'egg_drop', type: 'homing_missile', side, mesh,
-      pos: start.clone(), vel: new THREE.Vector3(0, 0.5, forwardSign(side) * 10),
+      food: 'egg', effect: 'egg_drop', type: 'parabola_homing_enemy', side, mesh,
+      pos: start.clone(),
+      vel: new THREE.Vector3(dx / tF, 0.5 * 9.8 * tF, dz / tF),
       done: false, age: 0, damage: def.damage ?? 3,
       target,
-      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 6,
       spawnChickOnImpact: true,
+      // no spinAxis/spinSpeed → no tumbling
     });
   }
 }
@@ -1519,18 +1530,19 @@ function stepFoodProjectiles(dt: number) {
         break;
       }
       case 'carrot_chain': {
+        // Parabolic arc with horizontal homing toward current target
+        p.vel.y -= 9.8 * dt;
         if (p.target && p.target.state !== 'dead') {
-          p.orbitAngle = (p.orbitAngle ?? 0) + 5 * dt;
-          p.orbitRadius = Math.max(0, (p.orbitRadius ?? 3) - 3.2 * dt);
-          const ang = p.orbitAngle;
-          const r = p.orbitRadius;
-          p.pos.set(
-            p.target.x + Math.cos(ang) * r,
-            1.8,
-            p.target.z + Math.sin(ang) * r,
-          );
-          if (p.mesh) p.mesh.position.copy(p.pos);
+          const dx = p.target.x - p.pos.x;
+          const dz = p.target.z - p.pos.z;
+          const d = Math.sqrt(dx * dx + dz * dz);
+          if (d > 0.01) {
+            p.vel.x += (dx / d) * 28 * dt; // strong horizontal homing
+            p.vel.z += (dz / d) * 28 * dt;
+          }
         }
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
         break;
       }
     }
@@ -1557,34 +1569,47 @@ function stepFoodProjectiles(dt: number) {
       continue;
     }
 
-    // ── carrot_chain: orbit-and-hit ───────────────────────────────────────────
+    // ── carrot_chain: parabola hit + chain relaunch ───────────────────────────
     if (p.type === 'carrot_chain') {
-      if (!p.target || p.target.state === 'dead') {
-        // Find next unhit enemy closest to current position
+      // Retarget if dead
+      if (p.target && p.target.state === 'dead') p.target = null;
+
+      let hitTarget = false;
+      if (p.target) {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.1) hitTarget = true;
+      }
+      // Also chain when hitting the ground (missed target)
+      const groundHit = p.pos.y < 0 && p.age > 0.3;
+
+      if (hitTarget || groundHit) {
+        if (hitTarget && p.target) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          p.chainHitEnemies?.add(p.target.id);
+        }
+        // Find next unhit enemy
         let next: UnitSim | null = null;
         let nextD = Infinity;
         for (const u of units) {
           if (u.side === p.side || u.state === 'dead') continue;
           if (p.chainHitEnemies?.has(u.id)) continue;
-          const d = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
-          if (d < nextD) { nextD = d; next = u; }
+          const du = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+          if (du < nextD) { nextD = du; next = u; }
         }
         if (next) {
           p.target = next;
-          p.orbitAngle = Math.atan2(p.pos.z - next.z, p.pos.x - next.x);
-          p.orbitRadius = 2.8;
+          // Relaunch from current position with a fresh parabola arc
+          p.pos.y = Math.max(p.pos.y, 0.3);
+          const ddx = next.x - p.pos.x, ddz = next.z - p.pos.z;
+          const dist2 = Math.sqrt(ddx * ddx + ddz * ddz);
+          const tF2 = Math.max(0.6, dist2 / 14);
+          p.vel.set(ddx / tF2, 0.5 * 9.8 * tF2, ddz / tF2);
         } else {
-          p.done = true;
+          p.done = true; // all enemies hit
         }
-      } else if ((p.orbitRadius ?? 3) < 0.4) {
-        // Close enough — deal damage and chain
-        p.target.hp = Math.max(0, p.target.hp - p.damage);
-        if (p.target.hp <= 0) p.target.state = 'dead';
-        p.chainHitEnemies?.add(p.target.id);
-        p.target = null; // will pick next on next frame
-        p.orbitRadius = 2.8;
       }
-      if (p.age > 20) p.done = true;
+      if (p.age > 25) p.done = true;
       continue;
     }
 
@@ -1646,33 +1671,45 @@ function stepFoodProjectiles(dt: number) {
     }
 
     if (p.effect === 'tomato_lob') {
-      // Damage on land + base damage if it lands at enemy base
-      if (p.pos.y < 0) {
-        // Damage enemies in small radius
+      // Primary: proximity hit on target (homing)
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.1) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          p.done = true;
+        }
+      }
+      // Fallback: ground impact (target died before we reached it)
+      if (!p.done && p.pos.y < 0) {
         const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
         for (const e of enemies) {
-          const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
-          if (ed < 1.2) {
-            e.hp = Math.max(0, e.hp - p.damage);
-            if (e.hp <= 0) e.state = 'dead';
-          }
-        }
-        // Damage enemy base if very close
-        const enemyBase = (p.side === 'p1' ? p2Base : p1Base);
-        if (enemyBase && Math.abs(p.pos.z - enemyBase.z) < 2.5) {
-          enemyBase.hp = Math.max(0, enemyBase.hp - p.damage);
+          const ed = Math.sqrt((p.pos.x - e.x) ** 2 + (p.pos.z - e.z) ** 2);
+          if (ed < 1.4) { e.hp = Math.max(0, e.hp - p.damage); if (e.hp <= 0) e.state = 'dead'; }
         }
         p.done = true;
       }
+      if (p.age > 8) p.done = true;
       continue;
     }
 
     if (p.effect === 'coconut_drop') {
       if (p.pos.y <= 0.2) {
         p.pos.y = 0;
-        // Spawn expanding shockwave ring (handles AOE damage as it expands)
+        // Expanding shockwave ring (AOE damage as ring expands)
         triggerCoconutShockwave(p.pos.x, p.pos.z, p.side, p.damage, p.aoe ?? 10);
+        // Split-halves visual
         if (p.mesh) scene.remove(p.mesh);
+        const halfL = makeFoodMesh('coconut_half');
+        const halfR = makeFoodMesh('coconut_half');
+        const sc = FOODS.coconut.size * 4; // match the enlarged projectile scale
+        halfL.scale.setScalar((foodModelScales['coconut_half'] ?? 1) * 4);
+        halfR.scale.setScalar((foodModelScales['coconut_half'] ?? 1) * 4);
+        halfL.position.set(p.pos.x - 0.5, sc * 0.5, p.pos.z);
+        halfR.position.set(p.pos.x + 0.5, sc * 0.5, p.pos.z);
+        halfR.rotation.y = Math.PI;
+        scene.add(halfL); scene.add(halfR);
+        setTimeout(() => { scene.remove(halfL); scene.remove(halfR); }, 600);
         p.mesh = null;
         p.done = true;
       }
@@ -1789,23 +1826,26 @@ function stepFoodProjectiles(dt: number) {
     }
 
     if (p.effect === 'egg_drop') {
-      if (p.pos.y <= 0.2) {
-        p.pos.y = 0;
-        // Hit enemy in small radius
-        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
-        for (const e of enemies) {
-          const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
-          if (ed < 0.9) {
-            e.hp = Math.max(0, e.hp - p.damage);
-            if (e.hp <= 0) e.state = 'dead';
+      // Primary: proximity hit on homing target
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.0) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          if (p.spawnChickOnImpact && Math.random() < 0.5) {
+            spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
           }
+          p.done = true;
         }
-        // 50% chance to spawn ally chick
+      }
+      // Fallback: ground impact
+      if (!p.done && p.pos.y <= 0.2) {
         if (p.spawnChickOnImpact && Math.random() < 0.5) {
           spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
         }
         p.done = true;
       }
+      if (p.age > 8) p.done = true;
       continue;
     }
   }
