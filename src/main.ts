@@ -413,7 +413,8 @@ function spawnBoss(bossId: string): void {
 }
 
 // ─── Environment Assets ───────────────────────────────────────────────────────
-const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
+const tdBase     = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
+const castleBase = `${import.meta.env.BASE_URL}kenney_castle-kit/Models/GLB%20format/`;
 
 type Team = 'red' | 'violet';
 let p1Team: Team = 'red';
@@ -460,8 +461,58 @@ function loadEnvironment() {
       if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
     }, undefined, err => { console.warn(`${name}.glb 로딩 실패:`, err); });
   });
+
+  // 성벽 로딩
+  let wallT: THREE.Group | null = null;
+  let cornerT: THREE.Group | null = null;
+  let wallLoaded = 0;
+  const onWallLoaded = () => { if (++wallLoaded === 2 && wallT && cornerT) placePerimeterWalls(wallT, cornerT); };
+  loader.load(`${castleBase}wall.glb`,        g => { wallT   = g.scene; onWallLoaded(); }, undefined, () => {});
+  loader.load(`${castleBase}wall-corner.glb`, g => { cornerT = g.scene; onWallLoaded(); }, undefined, () => {});
 }
 loadEnvironment();
+
+function placePerimeterWalls(wallT: THREE.Group, cornerT: THREE.Group) {
+  // 타일 크기를 런타임에 측정
+  const wb = new THREE.Box3().setFromObject(wallT);
+  const wsz = new THREE.Vector3();
+  wb.getSize(wsz);
+  const tw = Math.max(wsz.x, wsz.z); // 타일 한 변 길이 (정방형 기준)
+
+  // 지면 외곽 좌표 (buildField 의 ground plane 과 일치)
+  const X0 = -16, X1 = 16;
+  const Z0 = -10, Z1 = FIELD_LEN + 10;
+
+  const put = (tmpl: THREE.Group, x: number, z: number, ry: number) => {
+    const m = tmpl.clone(true);
+    m.position.set(x, 0, z);
+    m.rotation.y = ry;
+    (m as any).__isWall = true;
+    scene.add(m);
+  };
+
+  // ─ 네 모서리 ─
+  put(cornerT, X0, Z0,  0);              // 좌하
+  put(cornerT, X1, Z0,  Math.PI / 2);    // 우하
+  put(cornerT, X1, Z1,  Math.PI);        // 우상
+  put(cornerT, X0, Z1, -Math.PI / 2);    // 좌상
+
+  // ─ 좌측 벽 (x=X0, z 방향) ─
+  for (let z = Z0 + tw; z < Z1 - tw * 0.5; z += tw)
+    put(wallT, X0, z, -Math.PI / 2);     // 내부 방향 (+x) 로 face
+
+  // ─ 우측 벽 (x=X1) ─
+  for (let z = Z0 + tw; z < Z1 - tw * 0.5; z += tw)
+    put(wallT, X1, z,  Math.PI / 2);     // 내부 방향 (-x) 로 face
+
+  // ─ 하단 벽 (z=Z0, x 방향) ─
+  for (let x = X0 + tw; x < X1 - tw * 0.5; x += tw)
+    put(wallT, x, Z0,  0);               // 내부 방향 (+z) 로 face
+
+  // ─ 상단 벽 (z=Z1) ─
+  for (let x = X0 + tw; x < X1 - tw * 0.5; x += tw)
+    put(wallT, x, Z1,  Math.PI);         // 내부 방향 (-z) 로 face
+}
 
 function updateTowerVisual(side: Side) {
   if (!p1Base || !p2Base) return;
