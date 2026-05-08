@@ -1048,7 +1048,7 @@ function castBanana(side: Side) {
     pos: start.clone(), vel: dir.multiplyScalar(speed),
     done: false, age: 0, damage: FOODS.banana.damage ?? 8,
     basePos: start.clone(), returnPhase: false, hitEnemies: new Set<string>(),
-    spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 18,
+    spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 18,
   });
 }
 function castCoconut(side: Side) {
