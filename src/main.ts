@@ -2078,7 +2078,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.domElement.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:50vh;z-index:0;';
 document.body.style.margin = '0';
 document.body.style.overflow = 'hidden';
-document.body.style.background = '#0b1020';
+document.body.style.background = '#87ceeb';
 document.body.appendChild(renderer.domElement);
 
 function resizeRenderer() {
@@ -2089,17 +2089,18 @@ function resizeRenderer() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1a2e);
-scene.fog = new THREE.Fog(0x1a1a2e, 30, 70);
+scene.background = new THREE.Color(0x87ceeb); // 밝은 하늘색
+scene.fog = new THREE.Fog(0xb0dff0, 40, 90);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
 
 // Lighting
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-const sun = new THREE.DirectionalLight(0xfff5e0, 1.0);
-sun.position.set(5, 12, -5);
+scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+scene.add(new THREE.HemisphereLight(0x87ceeb, 0x5aab3a, 0.6)); // 하늘/땅 색조
+const sun = new THREE.DirectionalLight(0xfffde0, 1.5);
+sun.position.set(8, 20, -6);
 scene.add(sun);
 
 // ─── Camera Pan ───────────────────────────────────────────────────────────────
@@ -2136,7 +2137,7 @@ renderer.domElement.addEventListener('pointercancel', () => {
 function buildField() {
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(32, FIELD_LEN + 20),
-    new THREE.MeshStandardMaterial({ color: 0x2a3a2a, roughness: 1.0 })
+    new THREE.MeshStandardMaterial({ color: 0x6db84a, roughness: 0.9 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, -0.01, FIELD_LEN / 2);
