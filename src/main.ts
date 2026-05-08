@@ -469,27 +469,42 @@ function loadEnvironment() {
 loadEnvironment();
 
 function placeBackgroundTrees() {
-  // Called each time a new tree template loads — deduplicate by checking if already placed
   if (treeTemplates.length === 0) return;
-  // Only place when we have at least 2 templates for variety, or on first load
   if (treeTemplates.length > 1 && scene.children.filter(c => (c as any).__isBgTree).length > 0) return;
 
-  // Remove old trees if re-placing
   const old = scene.children.filter(c => (c as any).__isBgTree);
   old.forEach(o => scene.remove(o));
 
   const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  for (let z = -2; z <= FIELD_LEN + 2; z += 3.5) {
+  const addTree = (x: number, z: number, scale: number) => {
+    const tmpl = treeTemplates[Math.floor(Math.random() * treeTemplates.length)];
+    const tree = tmpl.clone(true);
+    tree.scale.setScalar(scale);
+    tree.position.set(x, 0, z);
+    tree.rotation.y = rng(0, Math.PI * 2);
+    (tree as any).__isBgTree = true;
+    scene.add(tree);
+  };
+
+  // Inner ring: dense canopy wall right at the field edge
+  for (let z = -4; z <= FIELD_LEN + 4; z += rng(1.8, 3.2)) {
     for (const side of [-1, 1]) {
-      const tmpl = treeTemplates[Math.floor(Math.random() * treeTemplates.length)];
-      const tree = tmpl.clone(true);
-      const s = rng(1.6, 2.8);
-      tree.scale.set(s, s, s);
-      tree.position.set(side * rng(14, 20), 0, z + rng(-1.5, 1.5));
-      tree.rotation.y = rng(0, Math.PI * 2);
-      (tree as any).__isBgTree = true;
-      scene.add(tree);
+      addTree(side * rng(6.5, 11), z + rng(-1.2, 1.2), rng(1.8, 3.2));
     }
+  }
+  // Outer ring: taller trees for depth (visible above inner canopy in side view)
+  for (let z = -6; z <= FIELD_LEN + 6; z += rng(2.5, 5)) {
+    for (const side of [-1, 1]) {
+      addTree(side * rng(11, 18), z + rng(-2, 2), rng(2.8, 4.5));
+    }
+  }
+  // Behind p1 base (z < 0) — wall of jungle
+  for (let i = 0; i < 28; i++) {
+    addTree((Math.random() - 0.5) * 32, -1 - Math.random() * 14, rng(2.0, 4.2));
+  }
+  // Behind p2 base (z > FIELD_LEN) — wall of jungle
+  for (let i = 0; i < 28; i++) {
+    addTree((Math.random() - 0.5) * 32, FIELD_LEN + 1 + Math.random() * 14, rng(2.0, 4.2));
   }
 }
 
@@ -2119,8 +2134,8 @@ function resizeRenderer() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a2540);
-scene.fog = new THREE.Fog(0x1a2540, 50, 80);
+scene.background = new THREE.Color(0x6aaa6a); // jungle canopy haze
+scene.fog = new THREE.Fog(0x5a9a5a, 30, 62);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
@@ -2164,27 +2179,54 @@ renderer.domElement.addEventListener('pointercancel', () => {
 
 // ─── Field Geometry ───────────────────────────────────────────────────────────
 function buildField() {
-  // Ground
+  // ── Ground: wide dark jungle floor (covers behind bases too) ─────────────
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(12, FIELD_LEN + 4),
-    new THREE.MeshStandardMaterial({ color: 0x6aaa5a, roughness: 0.9 })
+    new THREE.PlaneGeometry(32, FIELD_LEN + 20),
+    new THREE.MeshStandardMaterial({ color: 0x3d6b30, roughness: 1.0 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, -0.01, FIELD_LEN / 2);
   scene.add(ground);
 
-  // Center lane
+  // ── Dirt path: jungle trail down the center ───────────────────────────────
+  const pathEdge = new THREE.Mesh(
+    new THREE.PlaneGeometry(4.5, FIELD_LEN + 4),
+    new THREE.MeshStandardMaterial({ color: 0x5a7a38, roughness: 1.0 })
+  );
+  pathEdge.rotation.x = -Math.PI / 2;
+  pathEdge.position.set(0, 0, FIELD_LEN / 2);
+  scene.add(pathEdge);
+
   const lane = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.5, FIELD_LEN),
-    new THREE.MeshStandardMaterial({ color: 0x7ac060, roughness: 0.9 })
+    new THREE.PlaneGeometry(2.8, FIELD_LEN + 4),
+    new THREE.MeshStandardMaterial({ color: 0x7a5c2e, roughness: 1.0 })
   );
   lane.rotation.x = -Math.PI / 2;
-  lane.position.set(0, 0, FIELD_LEN / 2);
+  lane.position.set(0, 0.005, FIELD_LEN / 2);
   scene.add(lane);
 
-  // Grid lines
-  const grid = new THREE.GridHelper(FIELD_LEN + 4, 12, 0x2a4a2a, 0x2a4a2a);
-  grid.position.set(0, 0.01, FIELD_LEN / 2);
+  // ── Ground cover: jungle undergrowth patches on both sides of path ────────
+  const gcColors = [0x1b4a1a, 0x2d6a2d, 0x1a5e20, 0x2a5a25, 0x3a7030];
+  for (let i = 0; i < 80; i++) {
+    const sign = Math.random() < 0.5 ? -1 : 1;
+    const x = sign * (2.8 + Math.random() * 9);
+    const z = -2 + Math.random() * (FIELD_LEN + 4);
+    const r = 0.25 + Math.random() * 1.2;
+    const patch = new THREE.Mesh(
+      new THREE.CircleGeometry(r, 7),
+      new THREE.MeshStandardMaterial({
+        color: gcColors[Math.floor(Math.random() * gcColors.length)],
+        roughness: 1.0,
+      })
+    );
+    patch.rotation.x = -Math.PI / 2;
+    patch.position.set(x, 0.01, z);
+    scene.add(patch);
+  }
+
+  // ── Subtle grid (dark, hard to notice but helps spatial sense) ───────────
+  const grid = new THREE.GridHelper(FIELD_LEN + 4, 12, 0x1e3b1e, 0x1e3b1e);
+  grid.position.set(0, 0.02, FIELD_LEN / 2);
   scene.add(grid);
 }
 buildField();
