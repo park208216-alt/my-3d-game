@@ -2151,9 +2151,6 @@ function buildField() {
   lane.position.set(0, 0.005, FIELD_LEN / 2);
   scene.add(lane);
 
-  const grid = new THREE.GridHelper(FIELD_LEN + 4, 12, 0x222222, 0x222222);
-  grid.position.set(0, 0.02, FIELD_LEN / 2);
-  scene.add(grid);
 }
 buildField();
 
