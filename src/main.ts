@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { io } from 'socket.io-client';
 import { wordList } from './words';
@@ -2133,8 +2134,15 @@ function resizeRenderer() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb); // 밝은 하늘색
+scene.background = new THREE.Color(0x87ceeb); // HDRI 로딩 전 fallback
 scene.fog = new THREE.Fog(0xb0dff0, 40, 90);
+
+// HDRI 배경 + 환경 조명
+new EXRLoader().load(`${import.meta.env.BASE_URL}sky.exr`, (tex) => {
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  scene.background = tex;
+  scene.environment = tex;
+});
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
@@ -3049,6 +3057,11 @@ function showLoadingOverlay(show: boolean) {
 }
 
 // ─── Screen Manager ───────────────────────────────────────────────────────────
+// ─── BGM ─────────────────────────────────────────────────────────────────────
+const bgm = new Audio(`${import.meta.env.BASE_URL}bgm.mp3`);
+bgm.loop = true;
+bgm.volume = 0.4;
+
 function showScreen(s: Screen) {
   currentScreen = s;
   const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result'];
@@ -3056,6 +3069,13 @@ function showScreen(s: Screen) {
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
+
+  // BGM: 배틀 중엔 정지, 그 외엔 재생
+  if (s === 'battle') {
+    bgm.pause();
+  } else {
+    bgm.play().catch(() => {}); // 브라우저 autoplay 정책 무시
+  }
 }
 
 function updateHomeDisplay() {
