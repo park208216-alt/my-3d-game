@@ -874,7 +874,7 @@ function buildField() {
   // Ground
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(12, FIELD_LEN + 4),
-    new THREE.MeshStandardMaterial({ color: 0x3a5c3a, roughness: 1 })
+    new THREE.MeshStandardMaterial({ color: 0x6aaa5a, roughness: 0.9 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, -0.01, FIELD_LEN / 2);
@@ -883,7 +883,7 @@ function buildField() {
   // Center lane
   const lane = new THREE.Mesh(
     new THREE.PlaneGeometry(1.5, FIELD_LEN),
-    new THREE.MeshStandardMaterial({ color: 0x4a7040, roughness: 1 })
+    new THREE.MeshStandardMaterial({ color: 0x7ac060, roughness: 0.9 })
   );
   lane.rotation.x = -Math.PI / 2;
   lane.position.set(0, 0, FIELD_LEN / 2);
