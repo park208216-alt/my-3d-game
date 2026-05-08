@@ -1216,26 +1216,7 @@ function castCarrot(side: Side) {
       damageOnContact: def.damage ?? 5,
     });
   }
-  // Part 2: One chain-bouncing carrot projectile — parabola to nearest enemy,
-  // on hit chains to next unhit enemy with a fresh parabola arc
-  const nearest = findEnemyClosestToBase(side);
-  if (!nearest) return;
-  const startX = (Math.random() - 0.5) * 4;
-  const startPos = new THREE.Vector3(startX, 2.5, baseZ);
-  const dx0 = nearest.x - startX, dz0 = nearest.z - baseZ;
-  const dist0 = Math.sqrt(dx0 * dx0 + dz0 * dz0);
-  const tF0 = Math.max(0.7, dist0 / 14);
-  const mesh = makeFoodProjMesh('carrot');
-  mesh.position.copy(startPos);
-  foodProjectiles.push({
-    food: 'carrot', effect: 'carrot_spikes', type: 'carrot_chain', side, mesh,
-    pos: startPos.clone(),
-    vel: new THREE.Vector3(dx0 / tF0, 0.5 * 9.8 * tF0, dz0 / tF0),
-    done: false, age: 0, damage: (def.damage ?? 5) * 3,
-    target: nearest,
-    chainHitEnemies: new Set<string>(),
-    spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 10,
-  });
+  // (체인 당근 없음 — 기지 앞 구역 스파이크만)
 }
 function castEggplant(side: Side) {
   const target = findEnemyClosestToBase(side);
@@ -1730,28 +1711,60 @@ function stepFoodProjectiles(dt: number) {
     }
 
     if (p.effect === 'banana_boomerang') {
-      // Damage enemies on contact (each only once)
-      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
-      for (const e of enemies) {
-        if (p.hitEnemies?.has(e.id)) continue;
-        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
-        if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.4) {
-          e.hp = Math.max(0, e.hp - p.damage);
-          if (e.hp <= 0) e.state = 'dead';
-          p.hitEnemies?.add(e.id);
-        }
-      }
-      // Reverse direction at far point
       if (!p.returnPhase) {
-        const startZ = p.basePos!.z;
-        if (Math.abs(p.pos.z - startZ) > 22) {
-          p.vel.multiplyScalar(-1);
+        // Chain phase: hit enemies one by one and redirect
+        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
+        for (const e of enemies) {
+          if (p.hitEnemies?.has(e.id)) continue;
+          const ed = Math.sqrt((p.pos.x - e.x) ** 2 + (p.pos.z - e.z) ** 2);
+          if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.5) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+            p.hitEnemies?.add(e.id);
+            // Find next unhit enemy closest to current position
+            let next: UnitSim | null = null;
+            let nextD = Infinity;
+            for (const u of units) {
+              if (u.side === p.side || u.state === 'dead') continue;
+              if (p.hitEnemies?.has(u.id)) continue;
+              const du = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+              if (du < nextD) { nextD = du; next = u; }
+            }
+            if (next) {
+              // Redirect toward next enemy at same speed
+              const spd = Math.sqrt(p.vel.x ** 2 + p.vel.z ** 2);
+              const dx = next.x - p.pos.x, dz = next.z - p.pos.z;
+              const d = Math.sqrt(dx * dx + dz * dz);
+              if (d > 0.01) { p.vel.x = (dx / d) * spd; p.vel.z = (dz / d) * spd; }
+            } else {
+              // All enemies hit — return to base
+              p.returnPhase = true;
+              const bx = p.basePos?.x ?? 0, bz = p.basePos?.z ?? p.pos.z;
+              const spd = Math.sqrt(p.vel.x ** 2 + p.vel.z ** 2);
+              const dx = bx - p.pos.x, dz = bz - p.pos.z;
+              const d = Math.sqrt(dx * dx + dz * dz);
+              if (d > 0.01) { p.vel.x = (dx / d) * spd; p.vel.z = (dz / d) * spd; }
+            }
+            break; // one redirect per frame
+          }
+        }
+        // Fallback: if no enemies exist at all, return to base
+        if (!p.returnPhase && enemies.length === 0) {
           p.returnPhase = true;
-          p.hitEnemies?.clear(); // can hit again on return
+          const bx = p.basePos?.x ?? 0, bz = p.basePos?.z ?? p.pos.z;
+          const spd = Math.sqrt(p.vel.x ** 2 + p.vel.z ** 2);
+          const dx = bx - p.pos.x, dz = bz - p.pos.z;
+          const d = Math.sqrt(dx * dx + dz * dz);
+          if (d > 0.01) { p.vel.x = (dx / d) * spd; p.vel.z = (dz / d) * spd; }
         }
       } else {
-        if (p.basePos && Math.abs(p.pos.z - p.basePos.z) < 1) p.done = true;
+        // Return phase: fly back to base, no more hits
+        if (p.basePos) {
+          const db = Math.sqrt((p.pos.x - p.basePos.x) ** 2 + (p.pos.z - p.basePos.z) ** 2);
+          if (db < 1.5) p.done = true;
+        }
       }
+      if (p.age > 30) p.done = true;
       continue;
     }
 
