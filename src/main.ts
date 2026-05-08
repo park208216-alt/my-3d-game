@@ -787,11 +787,13 @@ function clearSiegeWeapons() {
 type FoodProjType =
   | 'parabola_homing_ally'  // apple, apple_green, pepper_green
   | 'parabola_homing_enemy' // orange, pepper_red, eggplant
-  | 'parabola_lob'          // tomato (ballistic, no homing)
-  | 'mortar_drop'           // egg, coconut (vertical drop from sky)
+  | 'parabola_lob'          // avocado (ballistic)
+  | 'mortar_drop'           // coconut (vertical drop from sky)
+  | 'homing_missile'        // tomato, egg (pure homing, no gravity)
   | 'banana'                // boomerang
   | 'roll'                  // pumpkin
-  | 'turnip';               // vertical jump
+  | 'turnip'                // vertical jump
+  | 'carrot_chain';         // spiraling chain-bounce carrot
 
 interface FoodProj {
   food: string;
@@ -817,6 +819,10 @@ interface FoodProj {
   spawnChickOnImpact?: boolean;  // egg
   zoneOnLand?: 'eggplant_dot';
   aoe?: number;
+  // carrot_chain fields
+  chainHitEnemies?: Set<string>;
+  orbitAngle?: number;
+  orbitRadius?: number;
 }
 
 type FoodZoneType = 'avocado_slow' | 'eggplant_dot' | 'lettuce_mine' | 'carrot_spike' | 'mushroom_paralyze';
@@ -842,6 +848,49 @@ const foodProjectiles: FoodProj[] = [];
 const foodZones: FoodZone[] = [];
 let broccoliUnits: { p1: UnitSim | null; p2: UnitSim | null } = { p1: null, p2: null };
 
+// ─── Coconut shockwave ────────────────────────────────────────────────────────
+interface CoconutShockwave {
+  ring: THREE.Mesh; mat: THREE.MeshBasicMaterial;
+  age: number; x: number; z: number;
+  side: Side; damage: number; maxRadius: number;
+  hitEnemies: Set<string>;
+}
+const coconutShockwaves: CoconutShockwave[] = [];
+
+function triggerCoconutShockwave(x: number, z: number, side: Side, damage: number, maxRadius: number) {
+  const geo = new THREE.RingGeometry(0.4, 1.5, 48);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xaa6622, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.18, z);
+  scene.add(ring);
+  coconutShockwaves.push({ ring, mat, age: 0, x, z, side, damage, maxRadius, hitEnemies: new Set() });
+}
+
+function stepCoconutShockwaves(dt: number) {
+  const DURATION = 1.6;
+  for (let i = coconutShockwaves.length - 1; i >= 0; i--) {
+    const sw = coconutShockwaves[i];
+    sw.age += dt;
+    const t = sw.age / DURATION;
+    if (t >= 1) { scene.remove(sw.ring); coconutShockwaves.splice(i, 1); continue; }
+    const curRadius = t * sw.maxRadius;
+    sw.ring.scale.setScalar(curRadius);
+    sw.mat.opacity = (1 - t) * 0.85;
+    // Damage enemies as the shockwave sweeps over them (once each)
+    for (const u of units) {
+      if (u.side === sw.side || u.state === 'dead') continue;
+      if (sw.hitEnemies.has(u.id)) continue;
+      const d = Math.sqrt((u.x - sw.x) ** 2 + (u.z - sw.z) ** 2);
+      if (d < curRadius) {
+        u.hp = Math.max(0, u.hp - sw.damage);
+        if (u.hp <= 0) u.state = 'dead';
+        sw.hitEnemies.add(u.id);
+      }
+    }
+  }
+}
+
 function broccoliActive(side: Side): boolean {
   const u = broccoliUnits[side];
   return !!(u && u.state !== 'dead' && u.hp > 0);
@@ -853,8 +902,10 @@ function clearFoodEffects() {
     if (z.mesh) scene.remove(z.mesh);
     if (z.ringMesh) scene.remove(z.ringMesh);
   }
+  for (const sw of coconutShockwaves) scene.remove(sw.ring);
   foodProjectiles.length = 0;
   foodZones.length = 0;
+  coconutShockwaves.length = 0;
   broccoliUnits = { p1: null, p2: null };
 }
 
@@ -988,23 +1039,37 @@ function castBanana(side: Side) {
   });
 }
 function castCoconut(side: Side) {
-  const minZ = Math.min(SPAWN_P1, SPAWN_P2) + 2;
-  const maxZ = Math.max(SPAWN_P1, SPAWN_P2) - 2;
   const def = FOODS.coconut;
-  for (let i = 0; i < def.count; i++) {
-    const x = (Math.random() - 0.5) * 9;
-    const z = minZ + Math.random() * (maxZ - minZ);
-    const start = new THREE.Vector3(x, 14, z);
-    const mesh = makeFoodProjMesh('coconut');
-    mesh.position.copy(start);
-    foodProjectiles.push({
-      food: 'coconut', effect: 'coconut_drop', type: 'mortar_drop', side, mesh,
-      pos: start.clone(), vel: new THREE.Vector3(0, -10, 0),
-      done: false, age: 0, damage: def.damage ?? 12, aoe: def.aoe ?? 2,
-      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 8,
-      splitOnLand: true,
-    });
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  // Find densest enemy cluster within 7-unit radius
+  const CLUSTER_R = 7;
+  let bestX = 0;
+  let bestZ = (getMyBaseZ(side) + getEnemyBaseZ(side)) / 2;
+  let bestCount = 0;
+  if (enemies.length > 0) {
+    for (const c of enemies) {
+      let cnt = 0;
+      for (const o of enemies) {
+        const d = Math.sqrt((c.x - o.x) ** 2 + (c.z - o.z) ** 2);
+        if (d < CLUSTER_R) cnt++;
+      }
+      if (cnt > bestCount) { bestCount = cnt; bestX = c.x; bestZ = c.z; }
+    }
   }
+  // Drop one very large coconut on densest cluster position
+  const landX = bestX + (Math.random() - 0.5) * 1.0;
+  const landZ = bestZ + (Math.random() - 0.5) * 1.0;
+  const start = new THREE.Vector3(landX, 24, landZ);
+  const mesh = makeFoodProjMesh('coconut');
+  mesh.scale.multiplyScalar(4); // massive visual
+  mesh.position.copy(start);
+  foodProjectiles.push({
+    food: 'coconut', effect: 'coconut_drop', type: 'mortar_drop', side, mesh,
+    pos: start.clone(), vel: new THREE.Vector3(0, -18, 0),
+    done: false, age: 0, damage: (def.damage ?? 12) * 2, aoe: 10,
+    spinAxis: new THREE.Vector3(1, 0.3, 0).normalize(), spinSpeed: 12,
+    splitOnLand: false,
+  });
 }
 function castOrange(side: Side) {
   const def = FOODS.orange;
@@ -1048,22 +1113,28 @@ function castTomato(side: Side) {
   const def = FOODS.tomato;
   const baseZ = getMyBaseZ(side);
   const enemyZ = getEnemyBaseZ(side);
-  const dropZ = enemyZ + forwardSign(side) * -3; // 3 units in front of enemy base
-  for (let i = 0; i < def.count; i++) {
-    const offsetX = (Math.random() - 0.5) * 6;
-    const start = new THREE.Vector3(0, 4, baseZ);
-    const dx = offsetX, dz = dropZ - baseZ;
-    const tFlight = 2.0;
+  // Target ALL enemies within 5 units of enemy base (no count limit)
+  const BASE_RANGE = 5;
+  let targets = units.filter(u => u.side !== side && u.state !== 'dead' && Math.abs(u.z - enemyZ) <= BASE_RANGE);
+  // Fallback: if no enemies near base, target all enemies
+  if (targets.length === 0) targets = units.filter(u => u.side !== side && u.state !== 'dead');
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    const offsetX = (Math.random() - 0.5) * 2;
+    const startY = 3 + Math.random() * 2;
+    const start = new THREE.Vector3(offsetX, startY, baseZ);
     const mesh = makeFoodProjMesh('tomato');
     mesh.position.copy(start);
+    const delay = i * 100;
     setTimeout(() => {
       foodProjectiles.push({
-        food: 'tomato', effect: 'tomato_lob', type: 'parabola_lob', side, mesh,
-        pos: start.clone(), vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+        food: 'tomato', effect: 'tomato_lob', type: 'homing_missile', side, mesh,
+        pos: start.clone(), vel: new THREE.Vector3(0, 1, forwardSign(side) * 10),
         done: false, age: 0, damage: def.damage ?? 3,
-        spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 5,
+        target,
+        spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 8,
       });
-    }, i * 80);
+    }, delay);
   }
 }
 function castBroccoli(side: Side) {
@@ -1107,23 +1178,47 @@ function castBroccoli(side: Side) {
 function castCarrot(side: Side) {
   const def = FOODS.carrot;
   const baseZ = getMyBaseZ(side);
-  // Spawn a row of carrots in front of base
-  for (let i = 0; i < def.count; i++) {
-    const offsetX = (i - (def.count - 1) / 2) * 1.6;
-    const z = baseZ + forwardSign(side) * (5 + Math.random() * 5);
+  // Part 1: Dense carpet of carrot spikes near own base — enemies anywhere in
+  // the base zone will be hit
+  const ZONE_COUNT = 18;
+  const ZONE_DEPTH = 9;
+  const ZONE_WIDTH = 11;
+  for (let i = 0; i < ZONE_COUNT; i++) {
+    const x = (Math.random() - 0.5) * ZONE_WIDTH;
+    const z = baseZ + forwardSign(side) * (0.5 + Math.random() * ZONE_DEPTH);
     const mesh = makeFoodMesh('carrot');
-    // Flip upside-down so pointed tip is up
     mesh.rotation.x = Math.PI;
-    mesh.position.set(offsetX, def.size, z);
+    mesh.position.set(x, def.size, z);
     scene.add(mesh);
     foodZones.push({
       food: 'carrot', type: 'carrot_spike', side, mesh,
-      pos: new THREE.Vector3(offsetX, 0, z),
-      radius: 0.6,
+      pos: new THREE.Vector3(x, 0, z),
+      radius: 1.4, // large hitbox
       endTime: battleClock + (def.duration ?? 3),
       damageOnContact: def.damage ?? 5,
     });
   }
+  // Part 2: One chain-bouncing carrot projectile that homes to each enemy
+  const nearest = findEnemyClosestToBase(side);
+  if (!nearest) return;
+  const startAngle = Math.atan2(baseZ - nearest.z, 0 - nearest.x);
+  const startPos = new THREE.Vector3(
+    nearest.x + Math.cos(startAngle) * 3,
+    1.8,
+    nearest.z + Math.sin(startAngle) * 3,
+  );
+  const mesh = makeFoodProjMesh('carrot');
+  mesh.position.copy(startPos);
+  foodProjectiles.push({
+    food: 'carrot', effect: 'carrot_spikes', type: 'carrot_chain', side, mesh,
+    pos: startPos.clone(), vel: new THREE.Vector3(0, 0, 0),
+    done: false, age: 0, damage: (def.damage ?? 5) * 3,
+    target: nearest,
+    chainHitEnemies: new Set<string>(),
+    orbitAngle: startAngle,
+    orbitRadius: 3.0,
+    spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 14,
+  });
 }
 function castEggplant(side: Side) {
   const target = findEnemyClosestToBase(side);
@@ -1145,35 +1240,84 @@ function castEggplant(side: Side) {
 }
 function castLettuce(side: Side) {
   const def = FOODS.lettuce;
-  const baseZ = getMyBaseZ(side);
-  for (let i = 0; i < def.count; i++) {
-    const x = (Math.random() - 0.5) * 8;
-    const z = baseZ + forwardSign(side) * (6 + Math.random() * 18);
-    const mesh = makeFoodMesh('lettuce');
-    mesh.position.set(x, def.size, z);
-    scene.add(mesh);
-    foodZones.push({
-      food: 'lettuce', type: 'lettuce_mine', side, mesh,
-      pos: new THREE.Vector3(x, 0, z), radius: def.aoe ?? 2,
-      endTime: battleClock + (def.duration ?? 5),
-      damageOnContact: def.damage ?? 12,
-    });
+  const MAX_LETTUCE = 6;
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  const spawnTargets = enemies.length > 0
+    ? enemies.slice(0, MAX_LETTUCE)
+    : null;
+  if (spawnTargets && spawnTargets.length > 0) {
+    // Spawn one lettuce mine at each enemy's current position
+    for (const e of spawnTargets) {
+      const ox = (Math.random() - 0.5) * 0.8;
+      const oz = (Math.random() - 0.5) * 0.8;
+      const x = e.x + ox, z = e.z + oz;
+      const mesh = makeFoodMesh('lettuce');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'lettuce', type: 'lettuce_mine', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: def.aoe ?? 2,
+        endTime: battleClock + (def.duration ?? 5),
+        damageOnContact: def.damage ?? 12,
+      });
+    }
+  } else {
+    // No enemies: scatter near enemy base
+    const enemyZ = getEnemyBaseZ(side);
+    for (let i = 0; i < 3; i++) {
+      const x = (Math.random() - 0.5) * 7;
+      const z = enemyZ + forwardSign(side) * -(1 + Math.random() * 4);
+      const mesh = makeFoodMesh('lettuce');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'lettuce', type: 'lettuce_mine', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: def.aoe ?? 2,
+        endTime: battleClock + (def.duration ?? 5),
+        damageOnContact: def.damage ?? 12,
+      });
+    }
   }
 }
 function castMushroom(side: Side) {
   const def = FOODS.mushroom;
-  for (let i = 0; i < def.count; i++) {
-    const x = (Math.random() - 0.5) * 9;
-    const z = SPAWN_P1 + 2 + Math.random() * (FIELD_LEN - 8);
-    const mesh = makeFoodMesh('mushroom');
-    mesh.position.set(x, def.size, z);
-    scene.add(mesh);
-    foodZones.push({
-      food: 'mushroom', type: 'mushroom_paralyze', side, mesh,
-      pos: new THREE.Vector3(x, 0, z), radius: 0.7,
-      endTime: battleClock + 30,
-      paralyzeDuration: def.duration ?? 2,
-    });
+  const MAX_MUSHROOM = 8;
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  const spawnTargets = enemies.length > 0
+    ? enemies.slice(0, MAX_MUSHROOM)
+    : null;
+  if (spawnTargets && spawnTargets.length > 0) {
+    // Spawn one mushroom directly at each enemy's current position
+    for (const e of spawnTargets) {
+      const ox = (Math.random() - 0.5) * 0.6;
+      const oz = (Math.random() - 0.5) * 0.6;
+      const x = e.x + ox, z = e.z + oz;
+      const mesh = makeFoodMesh('mushroom');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'mushroom', type: 'mushroom_paralyze', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: 1.0,
+        endTime: battleClock + 20,
+        paralyzeDuration: def.duration ?? 2,
+      });
+    }
+  } else {
+    // No enemies: scatter across the field near enemy side
+    const enemyZ = getEnemyBaseZ(side);
+    for (let i = 0; i < 4; i++) {
+      const x = (Math.random() - 0.5) * 9;
+      const z = enemyZ + forwardSign(side) * -(2 + Math.random() * 8);
+      const mesh = makeFoodMesh('mushroom');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'mushroom', type: 'mushroom_paralyze', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: 1.0,
+        endTime: battleClock + 20,
+        paralyzeDuration: def.duration ?? 2,
+      });
+    }
   }
 }
 function castPepperGreen(side: Side) {
@@ -1236,19 +1380,17 @@ function castEgg(side: Side) {
   const baseZ = getMyBaseZ(side);
   const enemies = pickEnemiesNear(side, def.count, baseZ);
   for (let i = 0; i < def.count; i++) {
-    const target = enemies[i];
-    const dropZ = target ? target.z : (baseZ + forwardSign(side) * (8 + i * 4));
-    const dropX = target ? target.x : (Math.random() - 0.5) * 6;
-    const start = new THREE.Vector3(0, 5, baseZ);
-    const dx = dropX, dz = dropZ - baseZ;
-    const tFlight = 1.6;
+    const target = enemies[i] ?? null;
+    const offsetX = (Math.random() - 0.5) * 2;
+    const start = new THREE.Vector3(offsetX, 3 + Math.random() * 2, baseZ);
     const mesh = makeFoodProjMesh('egg');
     mesh.position.copy(start);
     foodProjectiles.push({
-      food: 'egg', effect: 'egg_drop', type: 'mortar_drop', side, mesh,
-      pos: start.clone(), vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+      food: 'egg', effect: 'egg_drop', type: 'homing_missile', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(0, 0.5, forwardSign(side) * 10),
       done: false, age: 0, damage: def.damage ?? 3,
-      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 4,
+      target,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 6,
       spawnChickOnImpact: true,
     });
   }
@@ -1348,10 +1490,103 @@ function stepFoodProjectiles(dt: number) {
         if (p.pos.y <= 0 && p.age > 0.2) p.done = true;
         break;
       }
+      case 'homing_missile': {
+        // Retarget if current target died
+        if (p.target && p.target.state === 'dead') {
+          let nearest: UnitSim | null = null;
+          let nearestD = Infinity;
+          for (const u of units) {
+            if (u.side === p.side || u.state === 'dead') continue;
+            const d = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+            if (d < nearestD) { nearestD = d; nearest = u; }
+          }
+          p.target = nearest;
+        }
+        if (p.target) {
+          const tx = p.target.x;
+          const ty = (p.target.mesh?.position.y ?? 0) + 0.5;
+          const tz = p.target.z;
+          const dx = tx - p.pos.x, dy = ty - p.pos.y, dz = tz - p.pos.z;
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          const speed = 14;
+          if (d > 0.1) {
+            const want = new THREE.Vector3(dx / d * speed, dy / d * speed, dz / d * speed);
+            p.vel.lerp(want, Math.min(dt * 6, 1));
+          }
+        }
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+      case 'carrot_chain': {
+        if (p.target && p.target.state !== 'dead') {
+          p.orbitAngle = (p.orbitAngle ?? 0) + 5 * dt;
+          p.orbitRadius = Math.max(0, (p.orbitRadius ?? 3) - 3.2 * dt);
+          const ang = p.orbitAngle;
+          const r = p.orbitRadius;
+          p.pos.set(
+            p.target.x + Math.cos(ang) * r,
+            1.8,
+            p.target.z + Math.sin(ang) * r,
+          );
+          if (p.mesh) p.mesh.position.copy(p.pos);
+        }
+        break;
+      }
     }
 
     // Collision logic per effect
     if (p.done) continue;
+
+    // ── homing_missile: proximity hit ─────────────────────────────────────────
+    if (p.type === 'homing_missile') {
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.0) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          if (p.spawnChickOnImpact && Math.random() < 0.5) {
+            spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
+          }
+          p.done = true;
+        }
+      } else if (!p.target) {
+        p.done = true;
+      }
+      if (p.age > 10) p.done = true;
+      continue;
+    }
+
+    // ── carrot_chain: orbit-and-hit ───────────────────────────────────────────
+    if (p.type === 'carrot_chain') {
+      if (!p.target || p.target.state === 'dead') {
+        // Find next unhit enemy closest to current position
+        let next: UnitSim | null = null;
+        let nextD = Infinity;
+        for (const u of units) {
+          if (u.side === p.side || u.state === 'dead') continue;
+          if (p.chainHitEnemies?.has(u.id)) continue;
+          const d = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+          if (d < nextD) { nextD = d; next = u; }
+        }
+        if (next) {
+          p.target = next;
+          p.orbitAngle = Math.atan2(p.pos.z - next.z, p.pos.x - next.x);
+          p.orbitRadius = 2.8;
+        } else {
+          p.done = true;
+        }
+      } else if ((p.orbitRadius ?? 3) < 0.4) {
+        // Close enough — deal damage and chain
+        p.target.hp = Math.max(0, p.target.hp - p.damage);
+        if (p.target.hp <= 0) p.target.state = 'dead';
+        p.chainHitEnemies?.add(p.target.id);
+        p.target = null; // will pick next on next frame
+        p.orbitRadius = 2.8;
+      }
+      if (p.age > 20) p.done = true;
+      continue;
+    }
 
     if (p.effect === 'apple_buff' || p.effect === 'green_apple_buff') {
       // Reach target ally → apply buff
@@ -1435,24 +1670,9 @@ function stepFoodProjectiles(dt: number) {
     if (p.effect === 'coconut_drop') {
       if (p.pos.y <= 0.2) {
         p.pos.y = 0;
-        // AOE damage
-        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
-        for (const e of enemies) {
-          const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
-          if (ed <= (p.aoe ?? 2)) {
-            e.hp = Math.max(0, e.hp - p.damage);
-            if (e.hp <= 0) e.state = 'dead';
-          }
-        }
-        // Replace mesh with split halves briefly
+        // Spawn expanding shockwave ring (handles AOE damage as it expands)
+        triggerCoconutShockwave(p.pos.x, p.pos.z, p.side, p.damage, p.aoe ?? 10);
         if (p.mesh) scene.remove(p.mesh);
-        const halfL = makeFoodMesh('coconut_half');
-        const halfR = makeFoodMesh('coconut_half');
-        halfL.position.set(p.pos.x - 0.2, FOODS.coconut.size, p.pos.z);
-        halfR.position.set(p.pos.x + 0.2, FOODS.coconut.size, p.pos.z);
-        halfR.rotation.y = Math.PI;
-        scene.add(halfL); scene.add(halfR);
-        setTimeout(() => { scene.remove(halfL); scene.remove(halfR); }, 500);
         p.mesh = null;
         p.done = true;
       }
@@ -3767,6 +3987,7 @@ function animate() {
       stepFoodProjectiles(dt);
       stepFoodZones(dt);
       stepFoodBuffs(dt);
+      stepCoconutShockwaves(dt);
     }
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
