@@ -414,7 +414,6 @@ function spawnBoss(bossId: string): void {
 
 // ─── Environment Assets ───────────────────────────────────────────────────────
 const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
-const nkBase = `${import.meta.env.BASE_URL}kenney_nature-kit/Models/GLTF%20format/`;
 
 type Team = 'red' | 'violet';
 let p1Team: Team = 'red';
@@ -428,11 +427,6 @@ const redTowerTemplates: (THREE.Group | null)[] = Array(3).fill(null);
 const violetTowerTemplates: (THREE.Group | null)[] = Array(3).fill(null);
 let p1TowerMesh: THREE.Group | null = null;
 let p2TowerMesh: THREE.Group | null = null;
-const treeTemplates: THREE.Group[] = [];
-const rockTemplates: THREE.Group[] = [];
-const bushTemplates: THREE.Group[] = [];
-const flowerTemplates: THREE.Group[] = [];
-const stumpTemplates: THREE.Group[] = [];
 const baseTowerMeshes: THREE.Object3D[] = [];
 
 function tintClone(template: THREE.Group): THREE.Group {
@@ -466,120 +460,8 @@ function loadEnvironment() {
       if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
     }, undefined, err => { console.warn(`${name}.glb 로딩 실패:`, err); });
   });
-  for (const name of ['tree_default','tree_detailed','tree_fat','tree_oak','tree_tall','tree_simple','tree_blocks','tree_pineRoundA','tree_pineDefaultA']) {
-    loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
-  }
-  for (const name of ['rock_largeA','rock_largeB','rock_largeC','rock_smallA','rock_smallB','rock_smallC','rock_tallA','rock_tallB']) {
-    loader.load(`${nkBase}${name}.glb`, g => { rockTemplates.push(g.scene); placeBackgroundRocks(); }, undefined, () => {});
-  }
-  for (const name of ['plant_bush','plant_bushDetailed','plant_bushLarge','plant_bushSmall']) {
-    loader.load(`${nkBase}${name}.glb`, g => { bushTemplates.push(g.scene); placeBackgroundBushes(); }, undefined, () => {});
-  }
-  for (const name of ['flower_purpleA','flower_redA','flower_redB','flower_yellowA','flower_yellowB']) {
-    loader.load(`${nkBase}${name}.glb`, g => { flowerTemplates.push(g.scene); placeBackgroundFlowers(); }, undefined, () => {});
-  }
-  for (const name of ['stump_round','stump_old','log','log_large']) {
-    loader.load(`${nkBase}${name}.glb`, g => { stumpTemplates.push(g.scene); placeBackgroundStumps(); }, undefined, () => {});
-  }
 }
 loadEnvironment();
-
-function placeBackgroundTrees() {
-  if (treeTemplates.length === 0) return;
-  if (scene.children.some(c => (c as any).__isBgTree)) return;
-  const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  const addTree = (x: number, z: number, scale: number) => {
-    const tmpl = treeTemplates[Math.floor(Math.random() * treeTemplates.length)];
-    const tree = tmpl.clone(true);
-    tree.scale.setScalar(scale);
-    tree.position.set(x, 0, z);
-    tree.rotation.y = rng(0, Math.PI * 2);
-    (tree as any).__isBgTree = true;
-    scene.add(tree);
-  };
-  // Inner ring: bright canopy wall along field edges
-  for (let z = -4; z <= FIELD_LEN + 4; z += rng(1.8, 3.2))
-    for (const s of [-1, 1]) addTree(s * rng(6.5, 11), z + rng(-1.2, 1.2), rng(1.8, 3.2));
-  // Outer ring: taller trees for depth
-  for (let z = -6; z <= FIELD_LEN + 6; z += rng(2.5, 5))
-    for (const s of [-1, 1]) addTree(s * rng(11, 18), z + rng(-2, 2), rng(2.8, 4.5));
-  // Behind p1 base
-  for (let i = 0; i < 28; i++) addTree((Math.random() - 0.5) * 32, -1 - Math.random() * 14, rng(2.0, 4.2));
-  // Behind p2 base
-  for (let i = 0; i < 28; i++) addTree((Math.random() - 0.5) * 32, FIELD_LEN + 1 + Math.random() * 14, rng(2.0, 4.2));
-}
-
-function placeBackgroundRocks() {
-  if (rockTemplates.length === 0) return;
-  if (scene.children.some(c => (c as any).__isBgRock)) return;
-  const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  const addRock = (x: number, z: number, scale: number) => {
-    const tmpl = rockTemplates[Math.floor(Math.random() * rockTemplates.length)];
-    const r = tmpl.clone(true);
-    r.scale.setScalar(scale);
-    r.position.set(x, 0, z);
-    r.rotation.y = rng(0, Math.PI * 2);
-    (r as any).__isBgRock = true;
-    scene.add(r);
-  };
-  for (let z = -2; z <= FIELD_LEN + 2; z += rng(2.0, 5.0))
-    for (const s of [-1, 1])
-      if (Math.random() < 0.65) addRock(s * rng(3.0, 10.0), z + rng(-1.0, 1.0), rng(0.6, 2.0));
-  // Rock clusters near bases
-  for (let i = 0; i < 10; i++) {
-    const z = Math.random() < 0.5 ? -1 - Math.random() * 8 : FIELD_LEN + 1 + Math.random() * 8;
-    addRock((Math.random() - 0.5) * 14, z, rng(0.5, 1.8));
-  }
-}
-
-function placeBackgroundBushes() {
-  if (bushTemplates.length === 0) return;
-  if (scene.children.some(c => (c as any).__isBgBush)) return;
-  const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  for (let z = 0; z <= FIELD_LEN; z += rng(1.5, 3.5))
-    for (const s of [-1, 1])
-      if (Math.random() < 0.65) {
-        const tmpl = bushTemplates[Math.floor(Math.random() * bushTemplates.length)];
-        const b = tmpl.clone(true);
-        b.scale.setScalar(rng(0.8, 1.8));
-        b.position.set(s * rng(2.8, 8.0), 0, z + rng(-0.8, 0.8));
-        b.rotation.y = rng(0, Math.PI * 2);
-        (b as any).__isBgBush = true;
-        scene.add(b);
-      }
-}
-
-function placeBackgroundFlowers() {
-  if (flowerTemplates.length === 0) return;
-  if (scene.children.some(c => (c as any).__isBgFlower)) return;
-  const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  for (let i = 0; i < 70; i++) {
-    const s = Math.random() < 0.5 ? -1 : 1;
-    const tmpl = flowerTemplates[Math.floor(Math.random() * flowerTemplates.length)];
-    const f = tmpl.clone(true);
-    f.scale.setScalar(rng(0.7, 1.5));
-    f.position.set(s * rng(2.2, 9.0), 0, rng(-2, FIELD_LEN + 2));
-    f.rotation.y = rng(0, Math.PI * 2);
-    (f as any).__isBgFlower = true;
-    scene.add(f);
-  }
-}
-
-function placeBackgroundStumps() {
-  if (stumpTemplates.length === 0) return;
-  if (scene.children.some(c => (c as any).__isBgStump)) return;
-  const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  for (let i = 0; i < 20; i++) {
-    const s = Math.random() < 0.5 ? -1 : 1;
-    const tmpl = stumpTemplates[Math.floor(Math.random() * stumpTemplates.length)];
-    const st = tmpl.clone(true);
-    st.scale.setScalar(rng(0.8, 1.6));
-    st.position.set(s * rng(3.5, 10.0), 0, rng(-2, FIELD_LEN + 2));
-    st.rotation.y = rng(0, Math.PI * 2);
-    (st as any).__isBgStump = true;
-    scene.add(st);
-  }
-}
 
 function updateTowerVisual(side: Side) {
   if (!p1Base || !p2Base) return;
@@ -2196,7 +2078,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.domElement.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:50vh;z-index:0;';
 document.body.style.margin = '0';
 document.body.style.overflow = 'hidden';
-document.body.style.background = '#87ceeb';
+document.body.style.background = '#0b1020';
 document.body.appendChild(renderer.domElement);
 
 function resizeRenderer() {
@@ -2207,18 +2089,17 @@ function resizeRenderer() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xa8ddf8); // bright sky blue
-scene.fog = new THREE.Fog(0xc8eeff, 45, 85);
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 30, 70);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
 
-// Lighting — bright sunny forest
-scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-scene.add(new THREE.HemisphereLight(0x87ceeb, 0x5aab3a, 0.55)); // sky / ground
-const sun = new THREE.DirectionalLight(0xfffde0, 1.4);
-sun.position.set(8, 18, -6);
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xfff5e0, 1.0);
+sun.position.set(5, 12, -5);
 scene.add(sun);
 
 // ─── Camera Pan ───────────────────────────────────────────────────────────────
@@ -2253,53 +2134,23 @@ renderer.domElement.addEventListener('pointercancel', () => {
 
 // ─── Field Geometry ───────────────────────────────────────────────────────────
 function buildField() {
-  // ── Ground: bright sunny grass floor ─────────────────────────────────────
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(32, FIELD_LEN + 20),
-    new THREE.MeshStandardMaterial({ color: 0x6db84a, roughness: 0.9 })
+    new THREE.MeshStandardMaterial({ color: 0x2a3a2a, roughness: 1.0 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, -0.01, FIELD_LEN / 2);
   scene.add(ground);
 
-  // ── Soft grass border on each side of the lane ───────────────────────────
-  const pathEdge = new THREE.Mesh(
-    new THREE.PlaneGeometry(4.5, FIELD_LEN + 4),
-    new THREE.MeshStandardMaterial({ color: 0x89c94a, roughness: 0.9 })
-  );
-  pathEdge.rotation.x = -Math.PI / 2;
-  pathEdge.position.set(0, 0, FIELD_LEN / 2);
-  scene.add(pathEdge);
-
   const lane = new THREE.Mesh(
     new THREE.PlaneGeometry(2.8, FIELD_LEN + 4),
-    new THREE.MeshStandardMaterial({ color: 0xb8965a, roughness: 0.95 })
+    new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 1.0 })
   );
   lane.rotation.x = -Math.PI / 2;
   lane.position.set(0, 0.005, FIELD_LEN / 2);
   scene.add(lane);
 
-  // ── Bright grass colour patches on both sides of path ────────────────────
-  const gcColors = [0x78c44a, 0x5eb040, 0x8dcc55, 0x66bc3a, 0x92d460];
-  for (let i = 0; i < 80; i++) {
-    const sign = Math.random() < 0.5 ? -1 : 1;
-    const x = sign * (2.8 + Math.random() * 9);
-    const z = -2 + Math.random() * (FIELD_LEN + 4);
-    const r = 0.25 + Math.random() * 1.2;
-    const patch = new THREE.Mesh(
-      new THREE.CircleGeometry(r, 7),
-      new THREE.MeshStandardMaterial({
-        color: gcColors[Math.floor(Math.random() * gcColors.length)],
-        roughness: 0.9,
-      })
-    );
-    patch.rotation.x = -Math.PI / 2;
-    patch.position.set(x, 0.01, z);
-    scene.add(patch);
-  }
-
-  // ── Light grid (barely visible, just for spatial reference) ──────────────
-  const grid = new THREE.GridHelper(FIELD_LEN + 4, 12, 0x5aaa30, 0x5aaa30);
+  const grid = new THREE.GridHelper(FIELD_LEN + 4, 12, 0x222222, 0x222222);
   grid.position.set(0, 0.02, FIELD_LEN / 2);
   scene.add(grid);
 }
