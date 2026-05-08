@@ -1692,18 +1692,18 @@ function stepFoodProjectiles(dt: number) {
         p.pos.y = 0;
         // Expanding shockwave ring (AOE damage as ring expands)
         triggerCoconutShockwave(p.pos.x, p.pos.z, p.side, p.damage, p.aoe ?? 10);
-        // Split-halves visual
+        // Split-halves visual — same enlarged scale as the projectile
         if (p.mesh) scene.remove(p.mesh);
         const halfL = makeFoodMesh('coconut_half');
         const halfR = makeFoodMesh('coconut_half');
-        const sc = FOODS.coconut.size * 4; // match the enlarged projectile scale
-        halfL.scale.setScalar((foodModelScales['coconut_half'] ?? 1) * 4);
-        halfR.scale.setScalar((foodModelScales['coconut_half'] ?? 1) * 4);
-        halfL.position.set(p.pos.x - 0.5, sc * 0.5, p.pos.z);
-        halfR.position.set(p.pos.x + 0.5, sc * 0.5, p.pos.z);
+        const bigScale = (foodModelScales['coconut'] ?? 1) * 4;
+        halfL.scale.setScalar(bigScale);
+        halfR.scale.setScalar(bigScale);
+        halfL.position.set(p.pos.x - 1.0, FOODS.coconut.size * 2, p.pos.z);
+        halfR.position.set(p.pos.x + 1.0, FOODS.coconut.size * 2, p.pos.z);
         halfR.rotation.y = Math.PI;
         scene.add(halfL); scene.add(halfR);
-        setTimeout(() => { scene.remove(halfL); scene.remove(halfR); }, 600);
+        setTimeout(() => { scene.remove(halfL); scene.remove(halfR); }, 700);
         p.mesh = null;
         p.done = true;
       }
