@@ -493,28 +493,37 @@ function placePerimeterWalls(wallT: THREE.Group, cornerT: THREE.Group) {
     scene.add(m);
   };
 
-  // 모든 회전값 시계방향 90도 (-Math.PI/2) 적용
+  const tileW = tw * SCALE;
+
   // ─ 네 모서리 ─
-  put(cornerT, X0, Z0, -Math.PI / 2);   // 좌하
-  put(cornerT, X1, Z0,  0);             // 우하
-  put(cornerT, X1, Z1,  Math.PI / 2);   // 우상
-  put(cornerT, X0, Z1,  Math.PI);       // 좌상
+  put(cornerT, X0, Z0, -Math.PI / 2);
+  put(cornerT, X1, Z0,  0);
+  put(cornerT, X1, Z1,  Math.PI / 2);
+  put(cornerT, X0, Z1,  Math.PI);
 
-  // ─ 좌측 벽 (x=X0) ─
-  for (let z = Z0 + tw * SCALE; z < Z1 - tw * SCALE * 0.5; z += tw * SCALE)
-    put(wallT, X0, z,  Math.PI);
+  // 끊김 없이 채우기: span을 tileW 기준 count로 나눈 뒤 균등 배치
+  const fillZ = (x: number, ry: number) => {
+    const span = Z1 - Z0;
+    const n = Math.max(1, Math.round(span / tileW) - 2);
+    const step = (span - 2 * tileW) / n;
+    for (let i = 0; i < n; i++)
+      put(wallT, x, Z0 + tileW + (i + 0.5) * step, ry);
+  };
+  const fillX = (z: number, ry: number) => {
+    const span = X1 - X0;
+    const n = Math.max(1, Math.round(span / tileW) - 2);
+    const step = (span - 2 * tileW) / n;
+    for (let i = 0; i < n; i++)
+      put(wallT, X0 + tileW + (i + 0.5) * step, z, ry);
+  };
 
-  // ─ 우측 벽 (x=X1) ─
-  for (let z = Z0 + tw * SCALE; z < Z1 - tw * SCALE * 0.5; z += tw * SCALE)
-    put(wallT, X1, z,  0);
+  // 긴쪽(z 방향) 벽: 180도 뒤집어 battlements 방향 수정
+  fillZ(X0,  0);           // 좌측: Math.PI → 0 (180° 회전)
+  fillZ(X1,  Math.PI);     // 우측: 0 → Math.PI (180° 회전)
 
-  // ─ 하단 벽 (z=Z0) ─
-  for (let x = X0 + tw * SCALE; x < X1 - tw * SCALE * 0.5; x += tw * SCALE)
-    put(wallT, x, Z0, -Math.PI / 2);
-
-  // ─ 상단 벽 (z=Z1) ─
-  for (let x = X0 + tw * SCALE; x < X1 - tw * SCALE * 0.5; x += tw * SCALE)
-    put(wallT, x, Z1,  Math.PI / 2);
+  // 짧은쪽(x 방향) 벽
+  fillX(Z0, -Math.PI / 2);
+  fillX(Z1,  Math.PI / 2);
 }
 
 function updateTowerVisual(side: Side) {
@@ -2150,12 +2159,15 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
 
-// Lighting
+// Lighting — 양쪽 대칭 조명
 scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-scene.add(new THREE.HemisphereLight(0x87ceeb, 0x5aab3a, 0.6)); // 하늘/땅 색조
-const sun = new THREE.DirectionalLight(0xfffde0, 1.5);
+scene.add(new THREE.HemisphereLight(0x87ceeb, 0x5aab3a, 0.6));
+const sun = new THREE.DirectionalLight(0xfffde0, 1.1);
 sun.position.set(8, 20, -6);
 scene.add(sun);
+const sun2 = new THREE.DirectionalLight(0xfffde0, 1.1); // 반대편 조명
+sun2.position.set(-8, 20, -6);
+scene.add(sun2);
 
 // ─── Camera Pan ───────────────────────────────────────────────────────────────
 let camPan = 0;
