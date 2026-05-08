@@ -479,39 +479,42 @@ function placePerimeterWalls(wallT: THREE.Group, cornerT: THREE.Group) {
   wb.getSize(wsz);
   const tw = Math.max(wsz.x, wsz.z); // 타일 한 변 길이 (정방형 기준)
 
-  // 지면 외곽 좌표 (buildField 의 ground plane 과 일치)
-  const X0 = -16, X1 = 16;
+  // 안쪽으로 당긴 외곽 좌표 (카메라 x=8 기준으로 x=±9)
+  const X0 = -9, X1 = 9;
   const Z0 = -10, Z1 = FIELD_LEN + 10;
+  const SCALE = 2.5;
 
   const put = (tmpl: THREE.Group, x: number, z: number, ry: number) => {
     const m = tmpl.clone(true);
     m.position.set(x, 0, z);
     m.rotation.y = ry;
+    m.scale.setScalar(SCALE);
     (m as any).__isWall = true;
     scene.add(m);
   };
 
+  // 모든 회전값 시계방향 90도 (-Math.PI/2) 적용
   // ─ 네 모서리 ─
-  put(cornerT, X0, Z0,  0);              // 좌하
-  put(cornerT, X1, Z0,  Math.PI / 2);    // 우하
-  put(cornerT, X1, Z1,  Math.PI);        // 우상
-  put(cornerT, X0, Z1, -Math.PI / 2);    // 좌상
+  put(cornerT, X0, Z0, -Math.PI / 2);   // 좌하
+  put(cornerT, X1, Z0,  0);             // 우하
+  put(cornerT, X1, Z1,  Math.PI / 2);   // 우상
+  put(cornerT, X0, Z1,  Math.PI);       // 좌상
 
-  // ─ 좌측 벽 (x=X0, z 방향) ─
-  for (let z = Z0 + tw; z < Z1 - tw * 0.5; z += tw)
-    put(wallT, X0, z, -Math.PI / 2);     // 내부 방향 (+x) 로 face
+  // ─ 좌측 벽 (x=X0) ─
+  for (let z = Z0 + tw * SCALE; z < Z1 - tw * SCALE * 0.5; z += tw * SCALE)
+    put(wallT, X0, z,  Math.PI);
 
   // ─ 우측 벽 (x=X1) ─
-  for (let z = Z0 + tw; z < Z1 - tw * 0.5; z += tw)
-    put(wallT, X1, z,  Math.PI / 2);     // 내부 방향 (-x) 로 face
+  for (let z = Z0 + tw * SCALE; z < Z1 - tw * SCALE * 0.5; z += tw * SCALE)
+    put(wallT, X1, z,  0);
 
-  // ─ 하단 벽 (z=Z0, x 방향) ─
-  for (let x = X0 + tw; x < X1 - tw * 0.5; x += tw)
-    put(wallT, x, Z0,  0);               // 내부 방향 (+z) 로 face
+  // ─ 하단 벽 (z=Z0) ─
+  for (let x = X0 + tw * SCALE; x < X1 - tw * SCALE * 0.5; x += tw * SCALE)
+    put(wallT, x, Z0, -Math.PI / 2);
 
   // ─ 상단 벽 (z=Z1) ─
-  for (let x = X0 + tw; x < X1 - tw * 0.5; x += tw)
-    put(wallT, x, Z1,  Math.PI);         // 내부 방향 (-z) 로 face
+  for (let x = X0 + tw * SCALE; x < X1 - tw * SCALE * 0.5; x += tw * SCALE)
+    put(wallT, x, Z1,  Math.PI / 2);
 }
 
 function updateTowerVisual(side: Side) {
