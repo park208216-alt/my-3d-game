@@ -2799,7 +2799,6 @@ function buildDeckCards() {
     const f = FOODS[id];
     const card = document.createElement('div');
     card.dataset.id = id;
-    const hex = `#${f.color.toString(16).padStart(6, '0')}`;
     card.style.cssText = [
       'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,200,80,0.30);',
       `background:linear-gradient(180deg,rgba(60,30,5,0.55),rgba(20,10,2,0.55));text-align:center;font-size:12px;cursor:pointer;`,
@@ -2807,7 +2806,7 @@ function buildDeckCards() {
     ].join('');
     card.innerHTML = `
       <div style="position:absolute;top:4px;right:6px;font-size:9px;color:#ffd060;font-weight:700;letter-spacing:0.5px;">FOOD</div>
-      <div style="font-size:15px;font-weight:700;color:${hex};margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.7);">${f.name}</div>
+      <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.7);">${f.name}</div>
       <div style="opacity:0.85;line-height:1.4;font-size:10px;color:#fff5dc;min-height:28px;">
         ${f.desc}
       </div>
@@ -2866,7 +2865,7 @@ function buildSummonButtons() {
     btn.dataset.kind = isFood ? 'food' : 'animal';
     if (isFood) {
       btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,200,80,0.4);background:linear-gradient(180deg,rgba(80,40,5,0.50),rgba(40,20,2,0.50));color:#fff5dc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
-      btn.innerHTML = `<span style="font-size:14px;color:#ffe8a0">${def.name}</span><span style="opacity:0.85;font-size:11px;color:#ffd060;">비용 ${def.cost}</span>`;
+      btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.85;font-size:11px;color:#ffd060;">비용 ${def.cost}</span>`;
     } else {
       btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
       btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${def.cost}</span>`;
