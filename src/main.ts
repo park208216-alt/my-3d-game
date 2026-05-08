@@ -6,6 +6,7 @@ import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
+import { FOODS, FOOD_IDS, isFoodId } from './foods';
 import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK } from './supabase';
 import type { UserProfile } from './supabase';
 
@@ -238,6 +239,69 @@ function loadBossModels(): Promise<void> {
     })
   );
   return Promise.all(tasks).then(() => { console.log('[Boss] all models loaded'); });
+}
+
+// ─── Food Model Loading ──────────────────────────────────────────────────────
+const foodTemplates: Record<string, THREE.Group | null> = {};
+const foodModelScales: Record<string, number> = {}; // computed scale to match desired game-unit size
+let foodTemplatesLoading = false;
+
+function loadFoodModels(): Promise<void> {
+  if (foodTemplatesLoading) return Promise.resolve();
+  foodTemplatesLoading = true;
+  const foodBase = `${import.meta.env.BASE_URL}food/FBX/`;
+  // Also load Coconut_Half for the split animation
+  const extraFiles: { id: string; file: string; size: number }[] = [
+    { id: 'coconut_half', file: 'Coconut_Half.fbx', size: 0.18 },
+  ];
+  const loader = new FBXLoader();
+  const tasks: Promise<void>[] = [];
+  const loadOne = (id: string, file: string, targetSize: number) => {
+    return new Promise<void>(resolve => {
+      loader.load(`${foodBase}${file}`, (fbx) => {
+        foodTemplates[id] = fbx;
+        const box = new THREE.Box3().setFromObject(fbx);
+        const sz = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(sz.x, sz.y, sz.z);
+        // targetSize is the desired half-extent in game units → scale so longest axis ≈ 2*targetSize
+        const scale = maxDim > 0 ? (targetSize * 2) / maxDim : 1;
+        foodModelScales[id] = scale;
+        console.log(`[Food] loaded ${file} | raw size:`, sz.x.toFixed(2), sz.y.toFixed(2), sz.z.toFixed(2), '| scale:', scale.toFixed(4));
+        resolve();
+      }, undefined, (err) => {
+        console.warn(`[Food] FAILED to load ${file}:`, err);
+        resolve();
+      });
+    });
+  };
+  for (const def of Object.values(FOODS)) {
+    foodTemplates[def.id] = null;
+    tasks.push(loadOne(def.id, def.fbxFile, def.size));
+  }
+  for (const ex of extraFiles) {
+    foodTemplates[ex.id] = null;
+    tasks.push(loadOne(ex.id, ex.file, ex.size));
+  }
+  return Promise.all(tasks).then(() => { console.log('[Food] all models loaded'); });
+}
+
+function makeFoodMesh(foodId: string): THREE.Object3D {
+  const tmpl = foodTemplates[foodId];
+  if (tmpl) {
+    const m = skeletonClone(tmpl) as THREE.Group;
+    const s = foodModelScales[foodId] ?? 1;
+    m.scale.setScalar(s);
+    return m;
+  }
+  // Fallback: colored sphere
+  const def = FOODS[foodId];
+  const size = def?.size ?? 0.2;
+  const color = def?.color ?? 0xffffff;
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(size, 12, 8),
+    new THREE.MeshStandardMaterial({ color })
+  );
+  return mesh;
 }
 
 // FBX AnimationMixer helper: find clip by name substring
@@ -719,6 +783,937 @@ function clearSiegeWeapons() {
   projectiles.length = 0;
 }
 
+// ─── Food Magic System ───────────────────────────────────────────────────────
+type FoodProjType =
+  | 'parabola_homing_ally'  // apple, apple_green, pepper_green
+  | 'parabola_homing_enemy' // orange, pepper_red, eggplant
+  | 'parabola_lob'          // tomato (ballistic, no homing)
+  | 'mortar_drop'           // egg, coconut (vertical drop from sky)
+  | 'banana'                // boomerang
+  | 'roll'                  // pumpkin
+  | 'turnip';               // vertical jump
+
+interface FoodProj {
+  food: string;
+  effect: import('./foods').FoodEffect;
+  type: FoodProjType;
+  side: Side;
+  mesh: THREE.Object3D | null;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  done: boolean;
+  age: number;
+  damage: number;
+  // type-specific data
+  target?: UnitSim | null;
+  basePos?: THREE.Vector3;       // banana origin
+  returnPhase?: boolean;
+  hitEnemies?: Set<string>;      // banana piercing
+  spinAxis?: THREE.Vector3;
+  spinSpeed?: number;
+  rollDistMax?: number;
+  rollDistAcc?: number;
+  splitOnLand?: boolean;         // coconut
+  spawnChickOnImpact?: boolean;  // egg
+  zoneOnLand?: 'eggplant_dot';
+  aoe?: number;
+}
+
+type FoodZoneType = 'avocado_slow' | 'eggplant_dot' | 'lettuce_mine' | 'carrot_spike' | 'mushroom_paralyze';
+
+interface FoodZone {
+  food: string;
+  type: FoodZoneType;
+  side: Side;
+  mesh: THREE.Object3D;
+  ringMesh?: THREE.Mesh;
+  pos: THREE.Vector3;
+  radius: number;
+  endTime: number;
+  damagePerSec?: number;
+  damageOnContact?: number;
+  paralyzeDuration?: number;
+  slowFactor?: number;
+  used?: boolean;
+  ageInjected?: number;
+}
+
+const foodProjectiles: FoodProj[] = [];
+const foodZones: FoodZone[] = [];
+let broccoliUnits: { p1: UnitSim | null; p2: UnitSim | null } = { p1: null, p2: null };
+
+function broccoliActive(side: Side): boolean {
+  const u = broccoliUnits[side];
+  return !!(u && u.state !== 'dead' && u.hp > 0);
+}
+
+function clearFoodEffects() {
+  for (const p of foodProjectiles) if (p.mesh) scene.remove(p.mesh);
+  for (const z of foodZones) {
+    if (z.mesh) scene.remove(z.mesh);
+    if (z.ringMesh) scene.remove(z.ringMesh);
+  }
+  foodProjectiles.length = 0;
+  foodZones.length = 0;
+  broccoliUnits = { p1: null, p2: null };
+}
+
+function getMyBaseZ(side: Side): number {
+  return side === 'p1' ? 0 : FIELD_LEN;
+}
+function getEnemyBaseZ(side: Side): number {
+  return side === 'p1' ? FIELD_LEN : 0;
+}
+function forwardSign(side: Side): number {
+  return side === 'p1' ? 1 : -1; // positive Z direction toward enemy
+}
+
+function findAllyClosestToBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = Infinity;
+  for (const u of units) {
+    if (u.side !== side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d < bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function findAllyFarthestFromBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = -1;
+  for (const u of units) {
+    if (u.side !== side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d > bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function findEnemyFarthestFromBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = -1;
+  for (const u of units) {
+    if (u.side === side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d > bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function findEnemyClosestToBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = Infinity;
+  for (const u of units) {
+    if (u.side === side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d < bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function pickEnemiesNear(side: Side, count: number, fromZ: number): UnitSim[] {
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  enemies.sort((a, b) => Math.abs(a.z - fromZ) - Math.abs(b.z - fromZ));
+  return enemies.slice(0, count);
+}
+function pickAlliesRandom(side: Side, count: number): UnitSim[] {
+  const allies = units.filter(u => u.side === side && u.state !== 'dead');
+  // Fisher-Yates partial shuffle
+  for (let i = 0; i < Math.min(count, allies.length); i++) {
+    const j = i + Math.floor(Math.random() * (allies.length - i));
+    [allies[i], allies[j]] = [allies[j], allies[i]];
+  }
+  return allies.slice(0, count);
+}
+
+function makeFoodProjMesh(foodId: string): THREE.Object3D {
+  const mesh = makeFoodMesh(foodId);
+  scene.add(mesh);
+  return mesh;
+}
+
+// ─── Cast functions (one per food effect) ───────────────────────────────────
+function castApple(side: Side, green: boolean) {
+  const target = findAllyClosestToBase(side);
+  const foodId = green ? 'apple_green' : 'apple';
+  const baseZ = getMyBaseZ(side);
+  const startPos = new THREE.Vector3(0, 5, baseZ);
+  const mesh = makeFoodProjMesh(foodId);
+  mesh.position.copy(startPos);
+  foodProjectiles.push({
+    food: foodId, effect: green ? 'green_apple_buff' : 'apple_buff',
+    type: 'parabola_homing_ally', side, mesh,
+    pos: startPos.clone(), vel: new THREE.Vector3(0, 6, forwardSign(side) * 8),
+    done: false, age: 0, damage: 0, target,
+    spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 4,
+  });
+}
+function castAvocado(side: Side) {
+  const baseZ = getMyBaseZ(side);
+  // Land at midfield for max value
+  const targetZ = baseZ + forwardSign(side) * 12;
+  const targetX = (Math.random() - 0.5) * 4;
+  const startPos = new THREE.Vector3(0, 5, baseZ);
+  const dx = targetX - 0;
+  const dz = targetZ - baseZ;
+  const tFlight = 1.4;
+  const mesh = makeFoodProjMesh('avocado');
+  mesh.position.copy(startPos);
+  foodProjectiles.push({
+    food: 'avocado', effect: 'avocado_slow', type: 'parabola_lob', side, mesh,
+    pos: startPos.clone(),
+    vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+    done: false, age: 0, damage: 0,
+    spinAxis: new THREE.Vector3(1, 0, 1).normalize(), spinSpeed: 6,
+  });
+}
+function castBanana(side: Side) {
+  const target = findEnemyFarthestFromBase(side) ?? findEnemyClosestToBase(side);
+  const baseZ = getMyBaseZ(side);
+  const start = new THREE.Vector3(0, 3, baseZ);
+  // Aim at target X/Z (no parabola — straight line, fast)
+  const targetX = target ? target.x : 0;
+  const targetZ = target ? target.z : baseZ + forwardSign(side) * 20;
+  const dir = new THREE.Vector3(targetX - 0, 0, targetZ - baseZ).normalize();
+  const speed = 30;
+  const mesh = makeFoodProjMesh('banana');
+  mesh.position.copy(start);
+  foodProjectiles.push({
+    food: 'banana', effect: 'banana_boomerang', type: 'banana', side, mesh,
+    pos: start.clone(), vel: dir.multiplyScalar(speed),
+    done: false, age: 0, damage: FOODS.banana.damage ?? 8,
+    basePos: start.clone(), returnPhase: false, hitEnemies: new Set<string>(),
+    spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 18,
+  });
+}
+function castCoconut(side: Side) {
+  const minZ = Math.min(SPAWN_P1, SPAWN_P2) + 2;
+  const maxZ = Math.max(SPAWN_P1, SPAWN_P2) - 2;
+  const def = FOODS.coconut;
+  for (let i = 0; i < def.count; i++) {
+    const x = (Math.random() - 0.5) * 9;
+    const z = minZ + Math.random() * (maxZ - minZ);
+    const start = new THREE.Vector3(x, 14, z);
+    const mesh = makeFoodProjMesh('coconut');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'coconut', effect: 'coconut_drop', type: 'mortar_drop', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(0, -10, 0),
+      done: false, age: 0, damage: def.damage ?? 12, aoe: def.aoe ?? 2,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 8,
+      splitOnLand: true,
+    });
+  }
+}
+function castOrange(side: Side) {
+  const def = FOODS.orange;
+  const baseZ = getMyBaseZ(side);
+  const enemyTargets = pickEnemiesNear(side, def.count, baseZ);
+  const start = new THREE.Vector3(0, 4, baseZ);
+  for (let i = 0; i < def.count; i++) {
+    const target = enemyTargets[i] ?? enemyTargets[enemyTargets.length - 1] ?? null;
+    const mesh = makeFoodProjMesh('orange');
+    const offsetX = (Math.random() - 0.5) * 2;
+    const sp = new THREE.Vector3(offsetX, start.y, baseZ);
+    mesh.position.copy(sp);
+    foodProjectiles.push({
+      food: 'orange', effect: 'orange_volley', type: 'parabola_homing_enemy', side, mesh,
+      pos: sp.clone(), vel: new THREE.Vector3((target ? target.x - offsetX : 0) * 0.5, 4, forwardSign(side) * 6),
+      done: false, age: 0, damage: def.damage ?? 4, target,
+      spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 10,
+    });
+  }
+}
+function castPumpkin(side: Side) {
+  const def = FOODS.pumpkin;
+  const baseZ = getMyBaseZ(side);
+  const maxDist = (FIELD_LEN / 2) - 2; // roll about 2/3 toward middle
+  for (let i = 0; i < def.count; i++) {
+    const offsetX = (i - (def.count - 1) / 2) * 2.5;
+    const start = new THREE.Vector3(offsetX, 0.5, baseZ);
+    const mesh = makeFoodProjMesh('pumpkin');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'pumpkin', effect: 'pumpkin_roll', type: 'roll', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(0, 0, forwardSign(side) * 5),
+      done: false, age: 0, damage: def.damage ?? 15,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 8,
+      rollDistMax: maxDist, rollDistAcc: 0,
+      hitEnemies: new Set<string>(),
+    });
+  }
+}
+function castTomato(side: Side) {
+  const def = FOODS.tomato;
+  const baseZ = getMyBaseZ(side);
+  const enemyZ = getEnemyBaseZ(side);
+  const dropZ = enemyZ + forwardSign(side) * -3; // 3 units in front of enemy base
+  for (let i = 0; i < def.count; i++) {
+    const offsetX = (Math.random() - 0.5) * 6;
+    const start = new THREE.Vector3(0, 4, baseZ);
+    const dx = offsetX, dz = dropZ - baseZ;
+    const tFlight = 2.0;
+    const mesh = makeFoodProjMesh('tomato');
+    mesh.position.copy(start);
+    setTimeout(() => {
+      foodProjectiles.push({
+        food: 'tomato', effect: 'tomato_lob', type: 'parabola_lob', side, mesh,
+        pos: start.clone(), vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+        done: false, age: 0, damage: def.damage ?? 3,
+        spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 5,
+      });
+    }, i * 80);
+  }
+}
+function castBroccoli(side: Side) {
+  if (broccoliActive(side)) return;
+  const farAlly = findAllyFarthestFromBase(side);
+  const enemyZ = getEnemyBaseZ(side);
+  let z: number;
+  let x = (Math.random() - 0.5) * 4;
+  if (farAlly) {
+    z = farAlly.z;
+    // Don't let it overlap enemy base
+    if (Math.abs(z - enemyZ) < 5) z = enemyZ + forwardSign(side) * -5;
+  } else {
+    z = getMyBaseZ(side) + forwardSign(side) * 5;
+  }
+  // Spawn as a unit using a synthetic def
+  const def = FOODS.broccoli;
+  const id = `broccoli_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+  const mesh = makeFoodMesh('broccoli');
+  mesh.position.set(x, def.size, z);
+  scene.add(mesh);
+  // Inject ad-hoc AnimalDef so other code paths work
+  const adHocDef: AnimalDef = {
+    id: 'broccoli_barrier', name: '브로콜리', layer: 'ground', attackLayer: 'ground',
+    hp: 30, atk: 0, spd: 0, atkCooldown: 99, range: 0, cost: 0,
+    size: def.size, color: def.color,
+  };
+  if (!ANIMALS['broccoli_barrier']) ANIMALS['broccoli_barrier'] = adHocDef;
+  const unit: UnitSim = {
+    id, animalId: 'broccoli_barrier', side, z, x,
+    hp: 30, maxHp: 30, state: 'attacking',
+    atkTimer: 0, mesh, hpSprite: null, dustMesh: null, lastHp: 30,
+    mixer: null, currentAnim: '',
+  };
+  units.push(unit);
+  broccoliUnits[side] = unit;
+  // Auto-despawn after duration
+  const expireAt = battleClock + (def.duration ?? 5);
+  (unit as any)._broccoliExpire = expireAt;
+}
+function castCarrot(side: Side) {
+  const def = FOODS.carrot;
+  const baseZ = getMyBaseZ(side);
+  // Spawn a row of carrots in front of base
+  for (let i = 0; i < def.count; i++) {
+    const offsetX = (i - (def.count - 1) / 2) * 1.6;
+    const z = baseZ + forwardSign(side) * (5 + Math.random() * 5);
+    const mesh = makeFoodMesh('carrot');
+    // Flip upside-down so pointed tip is up
+    mesh.rotation.x = Math.PI;
+    mesh.position.set(offsetX, def.size, z);
+    scene.add(mesh);
+    foodZones.push({
+      food: 'carrot', type: 'carrot_spike', side, mesh,
+      pos: new THREE.Vector3(offsetX, 0, z),
+      radius: 0.6,
+      endTime: battleClock + (def.duration ?? 3),
+      damageOnContact: def.damage ?? 5,
+    });
+  }
+}
+function castEggplant(side: Side) {
+  const target = findEnemyClosestToBase(side);
+  const baseZ = getMyBaseZ(side);
+  const targetX = target ? target.x : 0;
+  const targetZ = target ? target.z : baseZ + forwardSign(side) * 8;
+  const start = new THREE.Vector3(0, 4, baseZ);
+  const dx = targetX, dz = targetZ - baseZ;
+  const tFlight = 1.0;
+  const mesh = makeFoodProjMesh('eggplant');
+  mesh.position.copy(start);
+  foodProjectiles.push({
+    food: 'eggplant', effect: 'eggplant_dot', type: 'parabola_lob', side, mesh,
+    pos: start.clone(), vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+    done: false, age: 0, damage: 0,
+    spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 6,
+    zoneOnLand: 'eggplant_dot', aoe: FOODS.eggplant.aoe ?? 3,
+  });
+}
+function castLettuce(side: Side) {
+  const def = FOODS.lettuce;
+  const baseZ = getMyBaseZ(side);
+  for (let i = 0; i < def.count; i++) {
+    const x = (Math.random() - 0.5) * 8;
+    const z = baseZ + forwardSign(side) * (6 + Math.random() * 18);
+    const mesh = makeFoodMesh('lettuce');
+    mesh.position.set(x, def.size, z);
+    scene.add(mesh);
+    foodZones.push({
+      food: 'lettuce', type: 'lettuce_mine', side, mesh,
+      pos: new THREE.Vector3(x, 0, z), radius: def.aoe ?? 2,
+      endTime: battleClock + (def.duration ?? 5),
+      damageOnContact: def.damage ?? 12,
+    });
+  }
+}
+function castMushroom(side: Side) {
+  const def = FOODS.mushroom;
+  for (let i = 0; i < def.count; i++) {
+    const x = (Math.random() - 0.5) * 9;
+    const z = SPAWN_P1 + 2 + Math.random() * (FIELD_LEN - 8);
+    const mesh = makeFoodMesh('mushroom');
+    mesh.position.set(x, def.size, z);
+    scene.add(mesh);
+    foodZones.push({
+      food: 'mushroom', type: 'mushroom_paralyze', side, mesh,
+      pos: new THREE.Vector3(x, 0, z), radius: 0.7,
+      endTime: battleClock + 30,
+      paralyzeDuration: def.duration ?? 2,
+    });
+  }
+}
+function castPepperGreen(side: Side) {
+  const def = FOODS.pepper_green;
+  const targets = pickAlliesRandom(side, def.count);
+  const baseZ = getMyBaseZ(side);
+  const start = new THREE.Vector3(0, 4, baseZ);
+  for (const target of targets) {
+    const mesh = makeFoodProjMesh('pepper_green');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'pepper_green', effect: 'pepper_green_heal', type: 'parabola_homing_ally',
+      side, mesh, pos: start.clone(),
+      vel: new THREE.Vector3((target.x - 0) * 0.7, 5, (target.z - baseZ) * 0.5),
+      done: false, age: 0, damage: 0, target,
+      spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 8,
+    });
+  }
+}
+function castPepperRed(side: Side) {
+  const def = FOODS.pepper_red;
+  const baseZ = getMyBaseZ(side);
+  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  const start = new THREE.Vector3(0, 4, baseZ);
+  for (const target of enemies) {
+    const mesh = makeFoodProjMesh('pepper_red');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'pepper_red', effect: 'pepper_red_dot', type: 'parabola_homing_enemy',
+      side, mesh, pos: start.clone(),
+      vel: new THREE.Vector3((target.x - 0) * 0.7, 5, (target.z - baseZ) * 0.5),
+      done: false, age: 0, damage: 0, target,
+      spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 8,
+    });
+  }
+}
+function castTurnip(side: Side) {
+  const def = FOODS.turnip;
+  const baseZ = getMyBaseZ(side);
+  // spawn turnips at enemy positions, jumping up
+  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  for (let i = 0; i < def.count; i++) {
+    const target = enemies[i];
+    const x = target ? target.x : (Math.random() - 0.5) * 8;
+    const z = target ? target.z : baseZ + forwardSign(side) * (8 + i * 3);
+    const start = new THREE.Vector3(x, 0, z);
+    const mesh = makeFoodProjMesh('turnip');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'turnip', effect: 'turnip_uppercut', type: 'turnip', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(0, 9, 0),
+      done: false, age: 0, damage: def.damage ?? 8,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 10,
+      hitEnemies: new Set<string>(),
+    });
+  }
+}
+function castEgg(side: Side) {
+  const def = FOODS.egg;
+  const baseZ = getMyBaseZ(side);
+  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  for (let i = 0; i < def.count; i++) {
+    const target = enemies[i];
+    const dropZ = target ? target.z : (baseZ + forwardSign(side) * (8 + i * 4));
+    const dropX = target ? target.x : (Math.random() - 0.5) * 6;
+    const start = new THREE.Vector3(0, 5, baseZ);
+    const dx = dropX, dz = dropZ - baseZ;
+    const tFlight = 1.6;
+    const mesh = makeFoodProjMesh('egg');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'egg', effect: 'egg_drop', type: 'mortar_drop', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+      done: false, age: 0, damage: def.damage ?? 3,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 4,
+      spawnChickOnImpact: true,
+    });
+  }
+}
+
+function triggerFoodEffect(foodId: string, side: Side) {
+  switch (foodId) {
+    case 'apple':       castApple(side, false); break;
+    case 'apple_green': castApple(side, true); break;
+    case 'avocado':     castAvocado(side); break;
+    case 'banana':      castBanana(side); break;
+    case 'coconut':     castCoconut(side); break;
+    case 'orange':      castOrange(side); break;
+    case 'pumpkin':     castPumpkin(side); break;
+    case 'tomato':      castTomato(side); break;
+    case 'broccoli':    castBroccoli(side); break;
+    case 'carrot':      castCarrot(side); break;
+    case 'eggplant':    castEggplant(side); break;
+    case 'lettuce':     castLettuce(side); break;
+    case 'mushroom':    castMushroom(side); break;
+    case 'pepper_green': castPepperGreen(side); break;
+    case 'pepper_red':   castPepperRed(side); break;
+    case 'turnip':      castTurnip(side); break;
+    case 'egg':         castEgg(side); break;
+  }
+}
+
+// ─── Step functions ──────────────────────────────────────────────────────────
+function applyAppleBuff(u: UnitSim, green: boolean) {
+  if (green) {
+    if (u.greenAppleBuffed) return;
+    u.greenAppleBuffed = true;
+    u.maxHp *= 2;
+    u.hp = Math.min(u.maxHp, u.hp * 2);
+  } else {
+    if (u.appleBuffed) return;
+    u.appleBuffed = true;
+  }
+  u.visualScale = (u.visualScale ?? 1) * 2;
+  if (u.mesh) {
+    const cur = u.mesh.scale.x;
+    u.mesh.scale.setScalar(cur * 2);
+  }
+}
+
+function stepFoodProjectiles(dt: number) {
+  for (const p of foodProjectiles) {
+    if (p.done) continue;
+    p.age += dt;
+    // Spin visual
+    if (p.mesh && p.spinAxis && p.spinSpeed) {
+      p.mesh.rotateOnAxis(p.spinAxis, p.spinSpeed * dt);
+    }
+    // Movement
+    switch (p.type) {
+      case 'parabola_lob':
+      case 'parabola_homing_enemy':
+      case 'parabola_homing_ally':
+      case 'mortar_drop': {
+        // Simple gravity
+        p.vel.y -= 9.8 * dt;
+        // Light homing for homing variants (steer toward target)
+        if (p.target && (p.type === 'parabola_homing_ally' || p.type === 'parabola_homing_enemy')) {
+          if (p.target.state === 'dead') p.target = null;
+          if (p.target) {
+            const dx = p.target.x - p.pos.x;
+            const dz = p.target.z - p.pos.z;
+            const d = Math.sqrt(dx*dx + dz*dz);
+            if (d > 0.01) {
+              const k = 6 * dt;
+              p.vel.x += (dx / d) * k * 4;
+              p.vel.z += (dz / d) * k * 4;
+            }
+          }
+        }
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+      case 'banana': {
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+      case 'roll': {
+        p.pos.addScaledVector(p.vel, dt);
+        p.pos.y = (FOODS.pumpkin.size ?? 0.5);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        p.rollDistAcc = (p.rollDistAcc ?? 0) + Math.abs(p.vel.z) * dt;
+        if (p.rollDistAcc >= (p.rollDistMax ?? 12)) p.done = true;
+        break;
+      }
+      case 'turnip': {
+        p.vel.y -= 9.8 * dt;
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        if (p.pos.y <= 0 && p.age > 0.2) p.done = true;
+        break;
+      }
+    }
+
+    // Collision logic per effect
+    if (p.done) continue;
+
+    if (p.effect === 'apple_buff' || p.effect === 'green_apple_buff') {
+      // Reach target ally → apply buff
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x)**2 + (p.pos.z - p.target.z)**2);
+        if (d < 1.0) {
+          applyAppleBuff(p.target, p.effect === 'green_apple_buff');
+          p.done = true;
+        }
+      } else if (!p.target || p.pos.y < -2) {
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'pepper_green_heal') {
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x)**2 + (p.pos.z - p.target.z)**2);
+        if (d < 1.0) {
+          p.target.hotEndTime = battleClock + (FOODS.pepper_green.duration ?? 3);
+          p.target.hotPerSec = 10;
+          p.target.hotNextTick = battleClock + 1;
+          p.done = true;
+        }
+      } else if (!p.target || p.pos.y < -2) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'pepper_red_dot') {
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x)**2 + (p.pos.z - p.target.z)**2);
+        if (d < 1.0) {
+          p.target.dotEndTime = battleClock + (FOODS.pepper_red.duration ?? 3);
+          p.target.dotPerSec = 10;
+          p.target.dotNextTick = battleClock + 1;
+          p.done = true;
+        }
+      } else if (!p.target || p.pos.y < -2) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'orange_volley') {
+      // Hit enemy on contact OR ground
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && e.state !== 'underground');
+      let hit = false;
+      for (const e of enemies) {
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.4) {
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+          hit = true;
+          break;
+        }
+      }
+      if (hit || p.pos.y < 0) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'tomato_lob') {
+      // Damage on land + base damage if it lands at enemy base
+      if (p.pos.y < 0) {
+        // Damage enemies in small radius
+        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
+        for (const e of enemies) {
+          const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+          if (ed < 1.2) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+          }
+        }
+        // Damage enemy base if very close
+        const enemyBase = (p.side === 'p1' ? p2Base : p1Base);
+        if (enemyBase && Math.abs(p.pos.z - enemyBase.z) < 2.5) {
+          enemyBase.hp = Math.max(0, enemyBase.hp - p.damage);
+        }
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'coconut_drop') {
+      if (p.pos.y <= 0.2) {
+        p.pos.y = 0;
+        // AOE damage
+        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+        for (const e of enemies) {
+          const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+          if (ed <= (p.aoe ?? 2)) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+          }
+        }
+        // Replace mesh with split halves briefly
+        if (p.mesh) scene.remove(p.mesh);
+        const halfL = makeFoodMesh('coconut_half');
+        const halfR = makeFoodMesh('coconut_half');
+        halfL.position.set(p.pos.x - 0.2, FOODS.coconut.size, p.pos.z);
+        halfR.position.set(p.pos.x + 0.2, FOODS.coconut.size, p.pos.z);
+        halfR.rotation.y = Math.PI;
+        scene.add(halfL); scene.add(halfR);
+        setTimeout(() => { scene.remove(halfL); scene.remove(halfR); }, 500);
+        p.mesh = null;
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'banana_boomerang') {
+      // Damage enemies on contact (each only once)
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
+      for (const e of enemies) {
+        if (p.hitEnemies?.has(e.id)) continue;
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.4) {
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+          p.hitEnemies?.add(e.id);
+        }
+      }
+      // Reverse direction at far point
+      if (!p.returnPhase) {
+        const startZ = p.basePos!.z;
+        if (Math.abs(p.pos.z - startZ) > 22) {
+          p.vel.multiplyScalar(-1);
+          p.returnPhase = true;
+          p.hitEnemies?.clear(); // can hit again on return
+        }
+      } else {
+        if (p.basePos && Math.abs(p.pos.z - p.basePos.z) < 1) p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'pumpkin_roll') {
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+      for (const e of enemies) {
+        if (p.hitEnemies?.has(e.id)) continue;
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.7) {
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+          p.hitEnemies?.add(e.id);
+        }
+      }
+      continue;
+    }
+
+    if (p.effect === 'eggplant_dot') {
+      if (p.pos.y < 0) {
+        // Spawn DOT zone
+        p.pos.y = 0;
+        const radius = p.aoe ?? 3;
+        const ring = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 28),
+          new THREE.MeshBasicMaterial({ color: 0x6a0dad, transparent: true, opacity: 0.45, depthWrite: false })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(p.pos.x, 0.02, p.pos.z);
+        scene.add(ring);
+        foodZones.push({
+          food: 'eggplant', type: 'eggplant_dot', side: p.side, mesh: ring,
+          pos: new THREE.Vector3(p.pos.x, 0, p.pos.z), radius,
+          endTime: battleClock + (FOODS.eggplant.duration ?? 5),
+          damagePerSec: 5,
+        });
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'avocado_slow') {
+      if (p.pos.y < 0) {
+        p.pos.y = 0;
+        const radius = FOODS.avocado.aoe ?? 4;
+        const ring = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 28),
+          new THREE.MeshBasicMaterial({ color: 0x6c8c40, transparent: true, opacity: 0.40, depthWrite: false })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(p.pos.x, 0.02, p.pos.z);
+        scene.add(ring);
+        // Pit visual: leave a mini avocado mesh
+        const pit = makeFoodMesh('avocado');
+        pit.position.set(p.pos.x, FOODS.avocado.size, p.pos.z);
+        scene.add(pit);
+        foodZones.push({
+          food: 'avocado', type: 'avocado_slow', side: p.side, mesh: pit, ringMesh: ring,
+          pos: new THREE.Vector3(p.pos.x, 0, p.pos.z), radius,
+          endTime: battleClock + (FOODS.avocado.duration ?? 5),
+          slowFactor: 0.4,
+        });
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'turnip_uppercut') {
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+      for (const e of enemies) {
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        const ey = (e.mesh?.position.y ?? 0);
+        const dy = Math.abs(p.pos.y - ey - 0.4);
+        if (ed < 0.6 && dy < 0.6) {
+          // Re-hittable cycle: track via hitEnemies but clear when leaves
+          if (!p.hitEnemies?.has(e.id)) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+            p.hitEnemies?.add(e.id);
+          }
+        } else {
+          p.hitEnemies?.delete(e.id);
+        }
+      }
+      continue;
+    }
+
+    if (p.effect === 'egg_drop') {
+      if (p.pos.y <= 0.2) {
+        p.pos.y = 0;
+        // Hit enemy in small radius
+        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
+        for (const e of enemies) {
+          const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+          if (ed < 0.9) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+          }
+        }
+        // 50% chance to spawn ally chick
+        if (p.spawnChickOnImpact && Math.random() < 0.5) {
+          spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
+        }
+        p.done = true;
+      }
+      continue;
+    }
+  }
+
+  // Cleanup
+  for (let i = foodProjectiles.length - 1; i >= 0; i--) {
+    if (foodProjectiles[i].done) {
+      const m = foodProjectiles[i].mesh;
+      if (m) scene.remove(m);
+      foodProjectiles.splice(i, 1);
+    }
+  }
+}
+
+function stepFoodZones(dt: number) {
+  const now = battleClock;
+  for (const z of foodZones) {
+    // Visual age fade for ring meshes
+    if (z.ringMesh) {
+      const remain = z.endTime - now;
+      const ringMat = z.ringMesh.material as THREE.MeshBasicMaterial;
+      if (remain < 1) ringMat.opacity = Math.max(0, remain * 0.4);
+    }
+    if (z.used || now > z.endTime) continue;
+    const enemies = units.filter(e => e.side !== z.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+
+    if (z.type === 'avocado_slow') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < z.radius) {
+          e.slowedUntil = now + 0.05; // refreshed every frame while inside
+          e.slowFactor = z.slowFactor ?? 0.4;
+        }
+      }
+    } else if (z.type === 'eggplant_dot') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < z.radius) {
+          e.hp = Math.max(0, e.hp - (z.damagePerSec ?? 5) * dt);
+          if (e.hp <= 0) e.state = 'dead';
+        }
+      }
+    } else if (z.type === 'lettuce_mine') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < 0.8) {
+          // Explode: AOE damage
+          for (const e2 of enemies) {
+            const d2 = Math.sqrt((z.pos.x - e2.x)**2 + (z.pos.z - e2.z)**2);
+            if (d2 < (z.radius ?? 2)) {
+              e2.hp = Math.max(0, e2.hp - (z.damageOnContact ?? 12));
+              if (e2.hp <= 0) e2.state = 'dead';
+            }
+          }
+          z.used = true;
+          break;
+        }
+      }
+    } else if (z.type === 'carrot_spike') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < (z.radius ?? 0.6)) {
+          // Once-per-second per spike (use ageInjected as last-hit timer)
+          const lastHit = z.ageInjected ?? -1;
+          if (now - lastHit > 0.5) {
+            e.hp = Math.max(0, e.hp - (z.damageOnContact ?? 5));
+            if (e.hp <= 0) e.state = 'dead';
+            z.ageInjected = now;
+          }
+        }
+      }
+    } else if (z.type === 'mushroom_paralyze') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < (z.radius ?? 0.7)) {
+          e.paralyzedUntil = now + (z.paralyzeDuration ?? 2);
+          z.used = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Cleanup expired/used
+  for (let i = foodZones.length - 1; i >= 0; i--) {
+    const z = foodZones[i];
+    if (z.used || now > z.endTime) {
+      if (z.mesh) scene.remove(z.mesh);
+      if (z.ringMesh) scene.remove(z.ringMesh);
+      foodZones.splice(i, 1);
+    }
+  }
+}
+
+function stepFoodBuffs(_dt: number) {
+  const now = battleClock;
+  for (const u of units) {
+    // Heal-over-time (pepper_green)
+    if (u.hotEndTime && now < u.hotEndTime) {
+      if (u.hotNextTick && now >= u.hotNextTick) {
+        u.hp = Math.min(u.maxHp, u.hp + (u.hotPerSec ?? 10));
+        u.hotNextTick = (u.hotNextTick ?? now) + 1;
+      }
+    } else if (u.hotEndTime) {
+      u.hotEndTime = undefined;
+    }
+    // Damage-over-time (pepper_red)
+    if (u.dotEndTime && now < u.dotEndTime && u.state !== 'dead') {
+      if (u.dotNextTick && now >= u.dotNextTick) {
+        u.hp = Math.max(0, u.hp - (u.dotPerSec ?? 10));
+        if (u.hp <= 0) u.state = 'dead';
+        u.dotNextTick = (u.dotNextTick ?? now) + 1;
+      }
+    } else if (u.dotEndTime) {
+      u.dotEndTime = undefined;
+    }
+  }
+  // Broccoli auto-despawn
+  for (const side of ['p1','p2'] as Side[]) {
+    const u = broccoliUnits[side];
+    if (u && (u as any)._broccoliExpire && now > (u as any)._broccoliExpire) {
+      u.state = 'dead';
+      u.hp = 0;
+      broccoliUnits[side] = null;
+    }
+  }
+}
+
 function updateSiegeButtons() {
   const myBallista = localSide === 'p1' ? p1Ballista : p2Ballista;
   const myCatapult = localSide === 'p1' ? p1Catapult : p2Catapult;
@@ -796,6 +1791,18 @@ interface UnitSim {
   evadeLabel?: THREE.Sprite | null;
   evadeLabelTimer?: number;
   bossLabel?: THREE.Sprite | null; // boss name label above unit
+  // ─── Food magic effects ───
+  appleBuffed?: boolean;         // 사과: ATK ×2, ATKSPD ×2 (영구)
+  greenAppleBuffed?: boolean;    // 초록사과: HP ×2, SPD ×2 (영구)
+  visualScale?: number;          // multiplier on mesh.scale (food can grow unit ×2)
+  hotEndTime?: number;           // 초록 피망: heal-over-time end
+  hotPerSec?: number;            // hp restored per second
+  hotNextTick?: number;          // next tick time
+  dotEndTime?: number;           // 빨간 피망: damage-over-time end
+  dotPerSec?: number;
+  dotNextTick?: number;
+  slowedUntil?: number;          // 아보카도 zone slow flag (frame-evaluated, not timestamp)
+  slowFactor?: number;           // ground speed multiplier (0.4 = 60% slow)
 }
 
 interface BaseSim {
@@ -1068,11 +2075,11 @@ let p1Base!: BaseSim;
 let p2Base!: BaseSim;
 let unitIdCounter = 0;
 
-function spawnUnit(animalId: string, side: Side, forcedId?: string): UnitSim {
+function spawnUnit(animalId: string, side: Side, forcedId?: string, forcedX?: number, forcedZ?: number): UnitSim {
   const def = ANIMALS[animalId];
   const id = forcedId ?? `u${++unitIdCounter}`;
-  const z = side === 'p1' ? SPAWN_P1 : SPAWN_P2;
-  const x = (Math.random() - 0.5) * 5;
+  const z = forcedZ ?? (side === 'p1' ? SPAWN_P1 : SPAWN_P2);
+  const x = forcedX ?? (Math.random() - 0.5) * 5;
 
   const mesh = makeUnitMesh(def, side);
   const yPos = def.layer === 'air' ? AIR_Y : def.size;
@@ -1170,11 +2177,12 @@ function canAttackEnemy(def: AnimalDef, enemyDef: AnimalDef): boolean {
 
 // AOE wrapper: hit primary target + all enemies within def.aoe radius
 function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allEnemies: UnitSim[], now: number) {
-  dealDamage(attacker, primary, def.atk, now);
+  const atk = attacker.appleBuffed ? def.atk * 2 : def.atk;
+  dealDamage(attacker, primary, atk, now);
   if (def.aoe) {
     for (const e of allEnemies) {
       if (e !== primary && Math.abs(e.z - primary.z) <= def.aoe && e.state !== 'dead') {
-        dealDamage(attacker, e, def.atk, now);
+        dealDamage(attacker, e, atk, now);
       }
     }
   }
@@ -1282,6 +2290,21 @@ function stepUnits(dt: number) {
   }
 }
 
+// Food buff helpers — read effective stats with apple/green-apple/avocado mods
+function effSpd(u: UnitSim, def: AnimalDef): number {
+  let s = def.spd;
+  if (u.greenAppleBuffed) s *= 2;
+  // Avocado slow (refreshed each frame while inside zone)
+  if (u.slowedUntil && battleClock < u.slowedUntil) s *= (u.slowFactor ?? 1);
+  return s;
+}
+function effAtk(u: UnitSim, def: AnimalDef): number {
+  return u.appleBuffed ? def.atk * 2 : def.atk;
+}
+function effAtkCooldown(u: UnitSim, def: AnimalDef): number {
+  return u.appleBuffed ? def.atkCooldown / 2 : def.atkCooldown;
+}
+
 function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, enemies: UnitSim[], base: BaseSim, now: number) {
   const attackable = enemies.filter(e => canAttackEnemy(def, ANIMALS[e.animalId]));
   let closest: UnitSim | null = null;
@@ -1307,29 +2330,29 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   if (def.ranged) {
     if (closest && closestDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = def.atkCooldown; }
+      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); }
       return;
     }
     if (baseDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
+      if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); }
       return;
     }
-    u.state = 'moving'; u.z += dir * def.spd * dt; return;
+    u.state = 'moving'; u.z += dir * effSpd(u, def) * dt; return;
   }
 
   if (closest && closestDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); }
     return;
   }
   if (baseDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); }
     return;
   }
   u.state = 'moving';
-  u.z += dir * def.spd * dt;
+  u.z += dir * effSpd(u, def) * dt;
 }
 
 function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base: BaseSim, now: number) {
@@ -1752,6 +2775,7 @@ let playerDeck: string[] = [...DEFAULT_DECK];
 function buildDeckCards() {
   const container = $('deck-cards');
   container.innerHTML = '';
+  // Animal cards
   for (const id of ANIMAL_IDS) {
     const d = ANIMALS[id];
     const card = document.createElement('div');
@@ -1767,6 +2791,27 @@ function buildDeckCards() {
         HP ${d.hp} / ATK ${d.atk}<br>
         SPD ${d.spd} / 비용 <b>${d.cost}</b>
       </div>`;
+    card.addEventListener('click', () => toggleDeckCard(id));
+    container.appendChild(card);
+  }
+  // Food cards (magic items)
+  for (const id of FOOD_IDS) {
+    const f = FOODS[id];
+    const card = document.createElement('div');
+    card.dataset.id = id;
+    const hex = `#${f.color.toString(16).padStart(6, '0')}`;
+    card.style.cssText = [
+      'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,200,80,0.30);',
+      `background:linear-gradient(180deg,rgba(60,30,5,0.55),rgba(20,10,2,0.55));text-align:center;font-size:12px;cursor:pointer;`,
+      'transition:border-color 0.12s,background 0.12s;user-select:none;position:relative;',
+    ].join('');
+    card.innerHTML = `
+      <div style="position:absolute;top:4px;right:6px;font-size:9px;color:#ffd060;font-weight:700;letter-spacing:0.5px;">FOOD</div>
+      <div style="font-size:15px;font-weight:700;color:${hex};margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.7);">${f.name}</div>
+      <div style="opacity:0.85;line-height:1.4;font-size:10px;color:#fff5dc;min-height:28px;">
+        ${f.desc}
+      </div>
+      <div style="margin-top:4px;font-size:11px;color:#ffd060;">비용 <b>${f.cost}</b></div>`;
     card.addEventListener('click', () => toggleDeckCard(id));
     container.appendChild(card);
   }
@@ -1814,12 +2859,22 @@ function buildSummonButtons() {
   summonBtns.length = 0;
   const deck = playerDeck.length > 0 ? playerDeck : ANIMAL_IDS.slice(0, DECK_MAX);
   for (const id of deck) {
-    const d = ANIMALS[id];
+    const isFood = isFoodId(id);
+    const def: { name: string; cost: number } = isFood ? FOODS[id] : ANIMALS[id];
     const btn = document.createElement('button');
     btn.dataset.id = id;
-    btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
-    btn.innerHTML = `<span style="font-size:14px;color:#fff">${d.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${d.cost}</span>`;
-    btn.addEventListener('click', () => playerSummon(id));
+    btn.dataset.kind = isFood ? 'food' : 'animal';
+    if (isFood) {
+      btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,200,80,0.4);background:linear-gradient(180deg,rgba(80,40,5,0.50),rgba(40,20,2,0.50));color:#fff5dc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
+      btn.innerHTML = `<span style="font-size:14px;color:#ffe8a0">${def.name}</span><span style="opacity:0.85;font-size:11px;color:#ffd060;">비용 ${def.cost}</span>`;
+    } else {
+      btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
+      btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${def.cost}</span>`;
+    }
+    btn.addEventListener('click', () => {
+      if (isFood) playerUseFood(id);
+      else playerSummon(id);
+    });
     grid.appendChild(btn);
     summonBtns.push(btn);
   }
@@ -1828,7 +2883,8 @@ function buildSummonButtons() {
 function updateSummonButtons() {
   for (const btn of summonBtns) {
     const id = btn.dataset.id!;
-    const canAfford = currency >= ANIMALS[id].cost;
+    const cost = isFoodId(id) ? FOODS[id].cost : ANIMALS[id].cost;
+    const canAfford = currency >= cost;
     btn.style.opacity = canAfford ? '1' : '0.4';
     btn.style.cursor = canAfford ? 'pointer' : 'not-allowed';
   }
@@ -1923,6 +2979,22 @@ function playerSummon(animalId: string) {
   }
 }
 
+function playerUseFood(foodId: string) {
+  if (!battleActive) return;
+  const def = FOODS[foodId];
+  if (!def) return;
+  if (currency < def.cost) return;
+  // Broccoli is unique: only one barrier allowed at a time
+  if (def.effect === 'broccoli_barrier' && broccoliActive(localSide)) return;
+  currency -= def.cost;
+  updateHud();
+  if (gameMode === '1p') {
+    triggerFoodEffect(foodId, localSide);
+  } else {
+    socket.emit('battleSpawn', { animalId: foodId }); // network: reuse animal channel
+  }
+}
+
 ($('btn-upgrade') as HTMLButtonElement).addEventListener('click', upgradeBase);
 ($('btn-ballista') as HTMLButtonElement).addEventListener('click', () => buySiege('ballista'));
 ($('btn-catapult') as HTMLButtonElement).addEventListener('click', () => buySiege('catapult'));
@@ -1953,6 +3025,7 @@ function clearBattle() {
   p1Team = 'red';
   p2Team = 'violet';
   clearSiegeWeapons();
+  clearFoodEffects();
 }
 
 async function startBattle() {
@@ -2000,6 +3073,7 @@ async function startBattle() {
     loadBossModels();
     loadMonsterModels();
   }
+  loadFoodModels();
 
   multiplayerTimeLeft = 120;
 
@@ -2444,10 +3518,15 @@ socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
 
 // ─── Chest Shop ───────────────────────────────────────────────────────────────
 const CHEST_POOLS: Record<string, string[]> = {
-  D: ['bee','chick','crab','penguin'],
-  C: ['bee','chick','crab','penguin','bunny','eagle','fox','koala','mole'],
-  B: ['bunny','eagle','fox','koala','mole','cat','cow','deer','dog','monkey','panda','pig','giraffe','hog'],
-  A: ['cat','deer','dog','monkey','pig','giraffe','hog','lion','polar','tiger','elephant'],
+  D: ['bee','chick','crab','penguin', 'orange','tomato','egg'],
+  C: ['bee','chick','crab','penguin','bunny','eagle','fox','koala','mole',
+      'orange','tomato','egg','banana','carrot','mushroom','pepper_green','pepper_red','turnip'],
+  B: ['bunny','eagle','fox','koala','mole','cat','cow','deer','dog','monkey','panda','pig','giraffe','hog',
+      'banana','carrot','mushroom','pepper_green','pepper_red','turnip',
+      'avocado','coconut','pumpkin','broccoli','eggplant','lettuce'],
+  A: ['cat','deer','dog','monkey','pig','giraffe','hog','lion','polar','tiger','elephant',
+      'avocado','coconut','pumpkin','broccoli','eggplant','lettuce',
+      'apple','apple_green'],
 };
 
 function rollAnimal(grade: string): string {
@@ -2455,23 +3534,35 @@ function rollAnimal(grade: string): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function showResultCard(animalId: string, grade: string) {
-  const def = ANIMALS[animalId];
+function showResultCard(itemId: string, grade: string) {
+  const isFood = isFoodId(itemId);
+  const def = isFood ? FOODS[itemId] : ANIMALS[itemId];
   if (!def) return;
   const hex = `#${def.color.toString(16).padStart(6,'0')}`;
   const gradeColor: Record<string,string> = { D:'#bbb', C:'#4af', B:'#b6f', A:'#fd0' };
   const gc = gradeColor[grade] ?? '#fff';
   const card = $('chest-result-card') as HTMLElement;
+  let stats = '';
+  if (isFood) {
+    const f = FOODS[itemId];
+    stats = `<div style="font-size:12px;color:#fff5dc;line-height:1.5;max-width:240px;">${f.desc}</div>
+             <div style="margin-top:8px;font-size:13px;color:#ffd060;">비용 ${f.cost}</div>`;
+  } else {
+    const a = ANIMALS[itemId];
+    stats = `<div style="display:flex;justify-content:center;gap:14px;font-size:13px;color:#a0ffb8;">
+        <span>HP ${a.hp}</span>
+        <span>ATK ${a.atk}</span>
+        <span>SPD ${a.spd}</span>
+      </div>`;
+  }
+  const tag = isFood ? `<div style="font-size:10px;color:#ffd060;letter-spacing:2px;margin-bottom:4px;">FOOD</div>` : '';
   card.innerHTML = `
     <div style="background:rgba(8,20,5,0.95);border:2px solid ${gc};border-radius:18px;padding:20px 28px;min-width:220px;text-align:center;box-shadow:0 0 30px ${gc}44;">
       <div style="font-size:12px;font-weight:700;color:${gc};letter-spacing:2px;margin-bottom:10px;">${grade}등급</div>
+      ${tag}
       <div style="width:56px;height:56px;border-radius:50%;background:${hex};margin:0 auto 12px;box-shadow:0 0 18px ${hex}99;"></div>
       <div style="font-size:24px;font-weight:900;color:#fff;margin-bottom:12px;">${def.name}</div>
-      <div style="display:flex;justify-content:center;gap:14px;font-size:13px;color:#a0ffb8;">
-        <span>HP ${def.hp}</span>
-        <span>ATK ${def.atk}</span>
-        <span>SPD ${def.spd}</span>
-      </div>
+      ${stats}
     </div>`;
   card.style.display = 'block';
 }
@@ -2673,6 +3764,11 @@ function animate() {
     for (const u of units) u.mixer?.update(dt);
     if (gameMode === '1p') stepSiegeWeapons(dt);
     stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
+    if (gameMode === '1p') {
+      stepFoodProjectiles(dt);
+      stepFoodZones(dt);
+      stepFoodBuffs(dt);
+    }
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
       syncBaseMeshes();
