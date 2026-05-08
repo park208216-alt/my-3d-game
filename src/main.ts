@@ -2014,12 +2014,15 @@ async function startBattle() {
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera(dt = 0) {
   if (camMode === 'top') {
-    // Bird's-eye: straight down over field center, own base at bottom of screen
-    camera.fov = 80;
+    // Bird's-eye: straight down over field center, field appears horizontal
+    // camera.up X-axis → Z-axis runs left-right on screen
+    // p1 base (z=SPAWN_P1, small) on right → up = (-1,0,0)
+    // p2 base (z=SPAWN_P2, large) on right → up = (+1,0,0)
+    camera.fov = 72;
     camera.updateProjectionMatrix();
-    camera.up.set(0, 0, localSide === 'p1' ? 1 : -1);
+    camera.up.set(localSide === 'p1' ? -1 : 1, 0, 0);
     const midZ = (SPAWN_P1 + SPAWN_P2) / 2;
-    camera.position.set(0, 36, midZ);
+    camera.position.set(0, 58, midZ);
     camera.lookAt(0, 0, midZ);
     return;
   }
