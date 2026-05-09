@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { io } from 'socket.io-client';
 import { wordList } from './words';
@@ -2134,15 +2133,8 @@ function resizeRenderer() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb); // HDRI 로딩 전 fallback
+scene.background = new THREE.Color(0x87ceeb);
 scene.fog = new THREE.Fog(0xb0dff0, 40, 90);
-
-// HDRI 배경 + 환경 조명
-new EXRLoader().load(`${import.meta.env.BASE_URL}sky.exr`, (tex) => {
-  tex.mapping = THREE.EquirectangularReflectionMapping;
-  scene.background = tex;
-  scene.environment = tex;
-});
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
