@@ -2818,7 +2818,13 @@ let isTypingMode = false;
 
 // 2P socket state
 const socketUrl = (import.meta.env.VITE_SOCKET_URL as string | undefined) ?? window.location.origin;
-const socket = io(socketUrl, { path: '/socket.io', transports: ['websocket'], autoConnect: false });
+const socket = io(socketUrl, {
+  path: '/socket.io',
+  transports: ['websocket', 'polling'],  // polling fallback for restrictive networks
+  autoConnect: false,
+  reconnectionAttempts: 3,
+  timeout: 8000,
+});
 let localSide: Side = 'p1';
 
 // ─── HTML Screens ─────────────────────────────────────────────────────────────
@@ -3111,6 +3117,16 @@ function showScreen(s: Screen) {
     bgm.pause();
   } else {
     bgm.play().catch(() => {}); // 브라우저 autoplay 정책 무시
+  }
+
+  // 2P 로비 진입 시 서버 wake-up ping (Render 무료 플랜 대비)
+  if (s === 'lobby2p') {
+    $('lobby-status').textContent = '서버 확인 중...';
+    const pingUrl = socketUrl.startsWith('http') ? socketUrl + '/health' : '/health';
+    fetch(pingUrl)
+      .then(r => r.json())
+      .then(() => { $('lobby-status').textContent = '서버 준비 완료'; })
+      .catch(() => { $('lobby-status').textContent = '서버 오프라인 (방장에게 문의)'; });
   }
 }
 
@@ -3761,9 +3777,18 @@ window.addEventListener('keydown', (e) => {
 // ─── 2P Socket Setup ──────────────────────────────────────────────────────────
 socket.on('connect', () => {
   $('lobby-status').textContent = '서버 연결됨';
+  // flush pending battleJoin if queued before connection
+  const pending = (socket as any).__pendingJoin;
+  if (pending) { delete (socket as any).__pendingJoin; socket.emit('battleJoin', pending); }
+});
+socket.on('connect_error', (err) => {
+  $('lobby-status').textContent = `서버 연결 실패: ${err.message}`;
 });
 socket.on('disconnect', () => {
   if (currentScreen === 'battle') endBattle('lose');
+});
+socket.on('waitingForOpponent', () => {
+  $('lobby-status').textContent = '상대방을 기다리는 중...';
 });
 socket.on('joinError', (msg: string) => { $('lobby-status').textContent = `오류: ${msg}`; });
 
@@ -4090,9 +4115,15 @@ $('btn-joinroom').addEventListener('click', () => {
   const nick = (loggedInUsername || 'Guest').slice(0, 16);
   const room = ($('in-room') as HTMLInputElement).value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
   if (!room) { $('lobby-status').textContent = '방 코드를 입력하세요'; return; }
-  $('lobby-status').textContent = '연결 중...';
-  if (!socket.connected) socket.connect();
-  socket.emit('battleJoin', { nickname: nick, roomCode: room });
+  $('lobby-status').textContent = '서버 연결 중...';
+  const payload = { nickname: nick, roomCode: room };
+  if (socket.connected) {
+    socket.emit('battleJoin', payload);
+  } else {
+    // store payload — emitted in connect handler above
+    (socket as any).__pendingJoin = payload;
+    socket.connect();
+  }
 });
 
 // Result
