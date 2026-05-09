@@ -3121,12 +3121,19 @@ function showScreen(s: Screen) {
 
   // 2P 로비 진입 시 서버 wake-up ping (Render 무료 플랜 대비)
   if (s === 'lobby2p') {
-    $('lobby-status').textContent = '서버 확인 중...';
+    $('lobby-status').textContent = '서버 깨우는 중... (최대 60초)';
     const pingUrl = socketUrl.startsWith('http') ? socketUrl + '/health' : '/health';
-    fetch(pingUrl)
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 70000); // 70s timeout
+    let dots = 0;
+    const dotInterval = setInterval(() => {
+      dots = (dots + 1) % 4;
+      $('lobby-status').textContent = '서버 깨우는 중' + '.'.repeat(dots + 1) + ' (최대 60초)';
+    }, 800);
+    fetch(pingUrl, { signal: ctrl.signal })
       .then(r => r.json())
-      .then(() => { $('lobby-status').textContent = '서버 준비 완료'; })
-      .catch(() => { $('lobby-status').textContent = '서버 오프라인 (방장에게 문의)'; });
+      .then(() => { clearTimeout(timer); clearInterval(dotInterval); $('lobby-status').textContent = '✅ 서버 준비 완료! 방 코드를 입력하세요'; })
+      .catch(() => { clearTimeout(timer); clearInterval(dotInterval); $('lobby-status').textContent = '⚠️ 서버 응답 없음 — 그래도 입장 시도해보세요'; });
   }
 }
 
