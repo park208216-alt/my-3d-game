@@ -29,7 +29,7 @@ jobs:
       - run: npm run build
         env:
           VITE_BASE_URL: /my-3d-game/
-          VITE_SOCKET_URL: https://zoo-battle-server.onrender.com
+          VITE_SOCKET_URL: https://zoo-battle-eng-game-hs.onrender.com
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
       - uses: actions/configure-pages@v4

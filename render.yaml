@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: zoo-battle-server
+    name: zoo-battle-eng-game-hs
     env: node
     plan: free
     buildCommand: npm install
