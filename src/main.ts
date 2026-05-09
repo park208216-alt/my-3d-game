@@ -911,7 +911,7 @@ function stepCoconutShockwaves(dt: number) {
       const d = Math.sqrt((u.x - sw.x) ** 2 + (u.z - sw.z) ** 2);
       if (d < curRadius) {
         u.hp = Math.max(0, u.hp - sw.damage);
-        if (u.hp <= 0) u.state = 'dead';
+        if (u.hp <= 0) { u.state = 'dead'; sfx('death'); }
         sw.hitEnemies.add(u.id);
       }
     }
@@ -1568,7 +1568,7 @@ function stepFoodProjectiles(dt: number) {
           if (p.spawnChickOnImpact && Math.random() < 0.5) {
             spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
           }
-          p.done = true;
+          sfx('food_hit'); p.done = true;
         }
       } else if (!p.target) {
         p.done = true;
@@ -1595,6 +1595,7 @@ function stepFoodProjectiles(dt: number) {
           p.target.hp = Math.max(0, p.target.hp - p.damage);
           if (p.target.hp <= 0) p.target.state = 'dead';
           p.chainHitEnemies?.add(p.target.id);
+          sfx('food_hit');
         }
         // Find next unhit enemy
         let next: UnitSim | null = null;
@@ -1674,7 +1675,7 @@ function stepFoodProjectiles(dt: number) {
           break;
         }
       }
-      if (hit || p.pos.y < 0) p.done = true;
+      if (hit || p.pos.y < 0) { sfx('food_hit'); p.done = true; }
       continue;
     }
 
@@ -1685,7 +1686,7 @@ function stepFoodProjectiles(dt: number) {
         if (d < 1.1) {
           p.target.hp = Math.max(0, p.target.hp - p.damage);
           if (p.target.hp <= 0) p.target.state = 'dead';
-          p.done = true;
+          sfx('food_hit'); p.done = true;
         }
       }
       // Fallback: ground impact (target died before we reached it)
@@ -1695,7 +1696,7 @@ function stepFoodProjectiles(dt: number) {
           const ed = Math.sqrt((p.pos.x - e.x) ** 2 + (p.pos.z - e.z) ** 2);
           if (ed < 1.4) { e.hp = Math.max(0, e.hp - p.damage); if (e.hp <= 0) e.state = 'dead'; }
         }
-        p.done = true;
+        sfx('food_hit'); p.done = true;
       }
       if (p.age > 8) p.done = true;
       continue;
@@ -1875,7 +1876,7 @@ function stepFoodProjectiles(dt: number) {
           if (p.spawnChickOnImpact && Math.random() < 0.5) {
             spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
           }
-          p.done = true;
+          sfx('food_hit'); p.done = true;
         }
       }
       // Fallback: ground impact
@@ -1883,7 +1884,7 @@ function stepFoodProjectiles(dt: number) {
         if (p.spawnChickOnImpact && Math.random() < 0.5) {
           spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
         }
-        p.done = true;
+        sfx('food_hit'); p.done = true;
       }
       if (p.age > 8) p.done = true;
       continue;
@@ -2628,12 +2629,12 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   if (def.ranged) {
     if (closest && closestDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); }
+      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); sfx('attack'); }
       return;
     }
     if (baseDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); }
+      if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); sfx('base_hit'); }
       return;
     }
     u.state = 'moving'; u.z += dir * effSpd(u, def) * dt; return;
@@ -2641,12 +2642,12 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
 
   if (closest && closestDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); }
+    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); sfx('attack'); }
     return;
   }
   if (baseDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); }
+    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); sfx('base_hit'); }
     return;
   }
   u.state = 'moving';
@@ -2677,7 +2678,7 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
   }
   if (baseDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; sfx('base_hit'); }
     return;
   }
   if (nearest) { u.state = 'moving'; u.z += dir * def.spd * dt; return; }
@@ -3054,6 +3055,48 @@ const bgm = new Audio(`${import.meta.env.BASE_URL}bgm.mp3`);
 bgm.loop = true;
 bgm.volume = 0.4;
 
+// ─── Sound Effects (Web Audio API) ───────────────────────────────────────────
+let _actx: AudioContext | null = null;
+const actx = () => { if (!_actx) _actx = new AudioContext(); if (_actx.state === 'suspended') _actx.resume(); return _actx; };
+
+function sfx(type: 'click'|'spawn'|'attack'|'death'|'base_hit'|'food_launch'|'food_hit'|'victory'|'defeat'|'upgrade'|'card') {
+  try {
+    const ctx = actx(); const t = ctx.currentTime;
+    const osc = (freq: number, type_: OscillatorType, start: number, dur: number, vol: number, freqEnd?: number) => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = type_; o.frequency.setValueAtTime(freq, start);
+      if (freqEnd !== undefined) o.frequency.exponentialRampToValueAtTime(freqEnd, start + dur);
+      g.gain.setValueAtTime(vol, start); g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      o.start(start); o.stop(start + dur);
+    };
+    const noise = (start: number, dur: number, vol: number, lpFreq?: number, hpFreq?: number) => {
+      const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate);
+      const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const s = ctx.createBufferSource(); const g = ctx.createGain(); s.buffer = buf;
+      let node: AudioNode = s;
+      if (lpFreq) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lpFreq; node.connect(f); node = f; }
+      if (hpFreq) { const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hpFreq; node.connect(f); node = f; }
+      node.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(vol, start); g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      s.start(start); s.stop(start + dur);
+    };
+    switch (type) {
+      case 'click':       osc(900, 'sine', t, 0.07, 0.12); break;
+      case 'card':        osc(600, 'sine', t, 0.05, 0.10); osc(900, 'sine', t+0.05, 0.07, 0.08); break;
+      case 'spawn':       [0,0.07,0.13].forEach((dt,i) => osc(300*(1.5**i),'square',t+dt,0.07,0.07)); break;
+      case 'attack':      noise(t, 0.08, 0.22, 500); break;
+      case 'death':       osc(380, 'sawtooth', t, 0.4, 0.18, 70); noise(t, 0.15, 0.1, 200); break;
+      case 'base_hit':    osc(90, 'sine', t, 0.5, 0.45, 35); noise(t, 0.2, 0.3, 300); break;
+      case 'food_launch': noise(t, 0.22, 0.13, undefined, 400); osc(400,'sine',t,0.12,0.08,1200); break;
+      case 'food_hit':    noise(t, 0.28, 0.38, 900); osc(120,'sine',t,0.2,0.2,40); break;
+      case 'upgrade':     [0,0.1,0.2].forEach((dt,i) => osc([880,1108,1320][i],'sine',t+dt,0.28,0.14)); break;
+      case 'victory':     [0,0.18,0.36,0.54].forEach((dt,i) => osc([523,659,784,1047][i],'sine',t+dt,0.45,0.22)); break;
+      case 'defeat':      [0,0.22,0.44,0.66].forEach((dt,i) => osc([392,330,294,220][i],'sine',t+dt,0.5,0.18)); break;
+    }
+  } catch { /* ignore audio errors */ }
+}
+
 function showScreen(s: Screen) {
   currentScreen = s;
   const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result'];
@@ -3061,6 +3104,7 @@ function showScreen(s: Screen) {
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
+  if (s !== 'battle' && s !== 'initial') sfx('click');
 
   // BGM: 배틀 중엔 정지, 그 외엔 재생
   if (s === 'battle') {
@@ -3101,7 +3145,7 @@ function buildDeckCards() {
         HP ${d.hp} / ATK ${d.atk}<br>
         SPD ${d.spd} / 비용 <b>${d.cost}</b>
       </div>`;
-    card.addEventListener('click', () => toggleDeckCard(id));
+    card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
     container.appendChild(card);
   }
   // Food cards (magic items)
@@ -3121,7 +3165,7 @@ function buildDeckCards() {
         ${f.desc}
       </div>
       <div style="margin-top:4px;font-size:11px;color:#ffd060;">비용 <b>${f.cost}</b></div>`;
-    card.addEventListener('click', () => toggleDeckCard(id));
+    card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
     container.appendChild(card);
   }
   refreshDeckCards();
@@ -3262,6 +3306,7 @@ function upgradeBase() {
   currency -= cost;
   if (gameMode === '1p') {
     p1TowerLevel++;
+    sfx('upgrade');
     const myBase = localSide === 'p1' ? p1Base : p2Base;
     myBase.maxHp += HP_PER_UPGRADE;
     myBase.hp = Math.min(myBase.maxHp, myBase.hp + HP_PER_UPGRADE);
@@ -3283,8 +3328,10 @@ function playerSummon(animalId: string) {
   if (gameMode === '1p') {
     const count = ANIMALS[animalId].groupSpawn ?? 1;
     for (let i = 0; i < count; i++) spawnUnit(animalId, localSide);
+    sfx('spawn');
   } else {
     socket.emit('battleSpawn', { animalId }); // single emit — server handles groupSpawn
+    sfx('spawn');
   }
 }
 
@@ -3299,8 +3346,10 @@ function playerUseFood(foodId: string) {
   updateHud();
   if (gameMode === '1p') {
     triggerFoodEffect(foodId, localSide);
+    sfx('food_launch');
   } else {
     socket.emit('battleSpawn', { animalId: foodId }); // network: reuse animal channel
+    sfx('food_launch');
   }
 }
 
@@ -3528,6 +3577,8 @@ function checkWinLose() {
 
 function endBattle(result: 'win' | 'lose' | 'draw') {
   battleActive = false;
+  if (result === 'win') sfx('victory');
+  else if (result === 'lose') sfx('defeat');
   const B = import.meta.env.BASE_URL;
   const isWin = result !== 'lose';
   const resScreen = $('screen-result');
