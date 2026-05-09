@@ -15,6 +15,10 @@ export const ALL_ANIMALS = [
   'bee','chick','crab','penguin','bunny','eagle','fox','koala','mole',
   'cat','cow','deer','dog','monkey','panda','pig','giraffe','hog',
   'lion','polar','tiger','elephant',
+  // Food magic items (treated as deckable items alongside animals)
+  'apple','apple_green','avocado','banana','coconut','orange','pumpkin','tomato',
+  'broccoli','carrot','eggplant','lettuce','mushroom','pepper_green','pepper_red',
+  'turnip','egg',
 ];
 
 export interface UserProfile {

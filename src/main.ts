@@ -6,6 +6,7 @@ import { io } from 'socket.io-client';
 import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
+import { FOODS, FOOD_IDS, isFoodId } from './foods';
 import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK } from './supabase';
 import type { UserProfile } from './supabase';
 
@@ -115,9 +116,9 @@ const BOSS_DEFS: Record<string, BossDef> = {
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
-    modelScale: 0.0424, collisionSize: 3.0,
+    modelScale: 0.0170, collisionSize: 3.0, // 고정 6유닛 (FBX 원본 353.95 × 0.0170 ≈ 6)
     aoe: 3,
-    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
+    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack', // Attack2 아님, 고정
   },
 };
 
@@ -240,6 +241,82 @@ function loadBossModels(): Promise<void> {
   return Promise.all(tasks).then(() => { console.log('[Boss] all models loaded'); });
 }
 
+// ─── Food Model Loading ──────────────────────────────────────────────────────
+const foodTemplates: Record<string, THREE.Group | null> = {};
+const foodModelScales: Record<string, number> = {}; // computed scale to match desired game-unit size
+let foodTemplatesLoading = false;
+
+function loadFoodModels(): Promise<void> {
+  if (foodTemplatesLoading) return Promise.resolve();
+  foodTemplatesLoading = true;
+  const foodBase = `${import.meta.env.BASE_URL}food/FBX/`;
+  // Also load Coconut_Half for the split animation
+  const extraFiles: { id: string; file: string; size: number }[] = [
+    { id: 'coconut_half', file: 'Coconut_Half.fbx', size: 0.18 },
+  ];
+  const loader = new FBXLoader();
+  const tasks: Promise<void>[] = [];
+  const loadOne = (id: string, file: string, targetSize: number) => {
+    return new Promise<void>(resolve => {
+      loader.load(`${foodBase}${file}`, (fbx) => {
+        foodTemplates[id] = fbx;
+        const box = new THREE.Box3().setFromObject(fbx);
+        const sz = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(sz.x, sz.y, sz.z);
+        const scale = maxDim > 0 ? (targetSize * 2) / maxDim : 1;
+        foodModelScales[id] = scale;
+        // FBX materials are lighting-dependent → add emissive so they look
+        // vibrant regardless of scene light angles
+        fbx.traverse((child: THREE.Object3D) => {
+          if (!(child as THREE.Mesh).isMesh) return;
+          const mats = Array.isArray((child as THREE.Mesh).material)
+            ? (child as THREE.Mesh).material as THREE.Material[]
+            : [(child as THREE.Mesh).material as THREE.Material];
+          mats.forEach(m => {
+            const mat = m as THREE.MeshPhongMaterial;
+            if (mat.emissive !== undefined && mat.color !== undefined) {
+              mat.emissive.copy(mat.color).multiplyScalar(0.55);
+            }
+          });
+        });
+        console.log(`[Food] loaded ${file} | raw size:`, sz.x.toFixed(2), sz.y.toFixed(2), sz.z.toFixed(2), '| scale:', scale.toFixed(4));
+        resolve();
+      }, undefined, (err) => {
+        console.warn(`[Food] FAILED to load ${file}:`, err);
+        resolve();
+      });
+    });
+  };
+  for (const def of Object.values(FOODS)) {
+    foodTemplates[def.id] = null;
+    tasks.push(loadOne(def.id, def.fbxFile, def.size));
+  }
+  for (const ex of extraFiles) {
+    foodTemplates[ex.id] = null;
+    tasks.push(loadOne(ex.id, ex.file, ex.size));
+  }
+  return Promise.all(tasks).then(() => { console.log('[Food] all models loaded'); });
+}
+
+function makeFoodMesh(foodId: string): THREE.Object3D {
+  const tmpl = foodTemplates[foodId];
+  if (tmpl) {
+    const m = skeletonClone(tmpl) as THREE.Group;
+    const s = foodModelScales[foodId] ?? 1;
+    m.scale.setScalar(s);
+    return m;
+  }
+  // Fallback: colored sphere
+  const def = FOODS[foodId];
+  const size = def?.size ?? 0.2;
+  const color = def?.color ?? 0xffffff;
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(size, 12, 8),
+    new THREE.MeshStandardMaterial({ color })
+  );
+  return mesh;
+}
+
 // FBX AnimationMixer helper: find clip by name substring
 function findClip(clips: THREE.AnimationClip[], name: string): THREE.AnimationClip | undefined {
   return clips.find(c => c.name.includes(name)) ?? clips[0];
@@ -336,8 +413,8 @@ function spawnBoss(bossId: string): void {
 }
 
 // ─── Environment Assets ───────────────────────────────────────────────────────
-const tdBase = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
-const nkBase = `${import.meta.env.BASE_URL}kenney_nature-kit/Models/GLTF%20format/`;
+const tdBase     = `${import.meta.env.BASE_URL}kenney_tower-defense-kit/Models/GLB%20format/`;
+const castleBase = `${import.meta.env.BASE_URL}kenney_castle-kit/Models/GLB%20format/`;
 
 type Team = 'red' | 'violet';
 let p1Team: Team = 'red';
@@ -351,7 +428,6 @@ const redTowerTemplates: (THREE.Group | null)[] = Array(3).fill(null);
 const violetTowerTemplates: (THREE.Group | null)[] = Array(3).fill(null);
 let p1TowerMesh: THREE.Group | null = null;
 let p2TowerMesh: THREE.Group | null = null;
-const treeTemplates: THREE.Group[] = [];
 const baseTowerMeshes: THREE.Object3D[] = [];
 
 function tintClone(template: THREE.Group): THREE.Group {
@@ -385,35 +461,50 @@ function loadEnvironment() {
       if (battleActive) { updateTowerVisual('p1'); updateTowerVisual('p2'); }
     }, undefined, err => { console.warn(`${name}.glb 로딩 실패:`, err); });
   });
-  for (const name of ['tree_default', 'tree_cone', 'tree_oak']) {
-    loader.load(`${nkBase}${name}.glb`, g => { treeTemplates.push(g.scene); placeBackgroundTrees(); }, undefined, () => {});
-  }
+
+  // 성벽 로딩
+  let wallT: THREE.Group | null = null;
+  let cornerT: THREE.Group | null = null;
+  let wallLoaded = 0;
+  const onWallLoaded = () => { if (++wallLoaded === 2 && wallT && cornerT) placePerimeterWalls(wallT, cornerT); };
+  loader.load(`${castleBase}wall.glb`,        g => { wallT   = g.scene; onWallLoaded(); }, undefined, () => {});
+  loader.load(`${castleBase}wall-corner.glb`, g => { cornerT = g.scene; onWallLoaded(); }, undefined, () => {});
 }
 loadEnvironment();
 
-function placeBackgroundTrees() {
-  // Called each time a new tree template loads — deduplicate by checking if already placed
-  if (treeTemplates.length === 0) return;
-  // Only place when we have at least 2 templates for variety, or on first load
-  if (treeTemplates.length > 1 && scene.children.filter(c => (c as any).__isBgTree).length > 0) return;
+function placePerimeterWalls(wallT: THREE.Group, _cornerT: THREE.Group) {
+  const wsz = new THREE.Box3().setFromObject(wallT).getSize(new THREE.Vector3());
+  const tw   = Math.max(wsz.x, wsz.z);
+  const SCALE = 2.5;
+  const tileW = tw * SCALE;
 
-  // Remove old trees if re-placing
-  const old = scene.children.filter(c => (c as any).__isBgTree);
-  old.forEach(o => scene.remove(o));
+  // 벽 외곽 — 땅과 같은 범위
+  const X0 = -10, X1 = 10;
+  const Z0 = -10, Z1 = FIELD_LEN + 10;
 
-  const rng = (min: number, max: number) => min + Math.random() * (max - min);
-  for (let z = -2; z <= FIELD_LEN + 2; z += 3.5) {
-    for (const side of [-1, 1]) {
-      const tmpl = treeTemplates[Math.floor(Math.random() * treeTemplates.length)];
-      const tree = tmpl.clone(true);
-      const s = rng(1.6, 2.8);
-      tree.scale.set(s, s, s);
-      tree.position.set(side * rng(14, 20), 0, z + rng(-1.5, 1.5));
-      tree.rotation.y = rng(0, Math.PI * 2);
-      (tree as any).__isBgTree = true;
-      scene.add(tree);
-    }
-  }
+  const put = (x: number, z: number, ry: number) => {
+    const m = wallT.clone(true);
+    m.position.set(x, 0, z);
+    m.rotation.y = ry;
+    m.scale.setScalar(SCALE);
+    (m as any).__isWall = true;
+    scene.add(m);
+  };
+
+  // 전체 span을 균등 분배 → 모서리까지 빈틈 없이 채움
+  const fillZ = (x: number, ry: number) => {
+    const n = Math.round((Z1 - Z0) / tileW);
+    for (let i = 0; i < n; i++) put(x, Z0 + (i + 0.5) * (Z1 - Z0) / n, ry);
+  };
+  const fillX = (z: number, ry: number) => {
+    const n = Math.round((X1 - X0) / tileW);
+    for (let i = 0; i < n; i++) put(X0 + (i + 0.5) * (X1 - X0) / n, z, ry);
+  };
+
+  fillZ(X0,  0);             // 좌측 긴 벽
+  fillZ(X1,  Math.PI);       // 우측 긴 벽
+  fillX(Z0, -Math.PI / 2);   // 하단 짧은 벽
+  fillX(Z1,  Math.PI / 2);   // 상단 짧은 벽
 }
 
 function updateTowerVisual(side: Side) {
@@ -719,6 +810,1211 @@ function clearSiegeWeapons() {
   projectiles.length = 0;
 }
 
+// ─── Food Magic System ───────────────────────────────────────────────────────
+type FoodProjType =
+  | 'parabola_homing_ally'  // apple, apple_green, pepper_green
+  | 'parabola_homing_enemy' // orange, pepper_red, eggplant
+  | 'parabola_lob'          // avocado (ballistic)
+  | 'mortar_drop'           // coconut (vertical drop from sky)
+  | 'homing_missile'        // tomato, egg (pure homing, no gravity)
+  | 'banana'                // boomerang
+  | 'roll'                  // pumpkin
+  | 'turnip'                // vertical jump
+  | 'carrot_chain';         // spiraling chain-bounce carrot
+
+interface FoodProj {
+  food: string;
+  effect: import('./foods').FoodEffect;
+  type: FoodProjType;
+  side: Side;
+  mesh: THREE.Object3D | null;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  done: boolean;
+  age: number;
+  damage: number;
+  // type-specific data
+  target?: UnitSim | null;
+  basePos?: THREE.Vector3;       // banana origin
+  returnPhase?: boolean;
+  hitEnemies?: Set<string>;      // banana piercing
+  spinAxis?: THREE.Vector3;
+  spinSpeed?: number;
+  rollDistMax?: number;
+  rollDistAcc?: number;
+  splitOnLand?: boolean;         // coconut
+  spawnChickOnImpact?: boolean;  // egg
+  zoneOnLand?: 'eggplant_dot';
+  aoe?: number;
+  // carrot_chain fields
+  chainHitEnemies?: Set<string>;
+  orbitAngle?: number;
+  orbitRadius?: number;
+}
+
+type FoodZoneType = 'avocado_slow' | 'eggplant_dot' | 'lettuce_mine' | 'carrot_spike' | 'mushroom_paralyze';
+
+interface FoodZone {
+  food: string;
+  type: FoodZoneType;
+  side: Side;
+  mesh: THREE.Object3D;
+  ringMesh?: THREE.Mesh;
+  pos: THREE.Vector3;
+  radius: number;
+  endTime: number;
+  damagePerSec?: number;
+  damageOnContact?: number;
+  paralyzeDuration?: number;
+  slowFactor?: number;
+  used?: boolean;
+  ageInjected?: number;
+}
+
+const foodProjectiles: FoodProj[] = [];
+const foodZones: FoodZone[] = [];
+let broccoliUnits: { p1: UnitSim | null; p2: UnitSim | null } = { p1: null, p2: null };
+
+// ─── Coconut shockwave ────────────────────────────────────────────────────────
+interface CoconutShockwave {
+  ring: THREE.Mesh; mat: THREE.MeshBasicMaterial;
+  age: number; x: number; z: number;
+  side: Side; damage: number; maxRadius: number;
+  hitEnemies: Set<string>;
+}
+const coconutShockwaves: CoconutShockwave[] = [];
+
+function triggerCoconutShockwave(x: number, z: number, side: Side, damage: number, maxRadius: number) {
+  const geo = new THREE.RingGeometry(0.4, 1.5, 48);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xaa6622, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.18, z);
+  scene.add(ring);
+  coconutShockwaves.push({ ring, mat, age: 0, x, z, side, damage, maxRadius, hitEnemies: new Set() });
+}
+
+function stepCoconutShockwaves(dt: number) {
+  const DURATION = 1.6;
+  for (let i = coconutShockwaves.length - 1; i >= 0; i--) {
+    const sw = coconutShockwaves[i];
+    sw.age += dt;
+    const t = sw.age / DURATION;
+    if (t >= 1) { scene.remove(sw.ring); coconutShockwaves.splice(i, 1); continue; }
+    const curRadius = t * sw.maxRadius;
+    sw.ring.scale.setScalar(curRadius);
+    sw.mat.opacity = (1 - t) * 0.85;
+    // Damage enemies as the shockwave sweeps over them (once each)
+    for (const u of units) {
+      if (u.side === sw.side || u.state === 'dead') continue;
+      if (sw.hitEnemies.has(u.id)) continue;
+      const d = Math.sqrt((u.x - sw.x) ** 2 + (u.z - sw.z) ** 2);
+      if (d < curRadius) {
+        u.hp = Math.max(0, u.hp - sw.damage);
+        if (u.hp <= 0) { u.state = 'dead'; sfx('death'); }
+        sw.hitEnemies.add(u.id);
+      }
+    }
+  }
+}
+
+function broccoliActive(side: Side): boolean {
+  const u = broccoliUnits[side];
+  return !!(u && u.state !== 'dead' && u.hp > 0);
+}
+
+function clearFoodEffects() {
+  for (const p of foodProjectiles) if (p.mesh) scene.remove(p.mesh);
+  for (const z of foodZones) {
+    if (z.mesh) scene.remove(z.mesh);
+    if (z.ringMesh) scene.remove(z.ringMesh);
+  }
+  for (const sw of coconutShockwaves) scene.remove(sw.ring);
+  foodProjectiles.length = 0;
+  foodZones.length = 0;
+  coconutShockwaves.length = 0;
+  broccoliUnits = { p1: null, p2: null };
+}
+
+function getMyBaseZ(side: Side): number {
+  return side === 'p1' ? 0 : FIELD_LEN;
+}
+function getEnemyBaseZ(side: Side): number {
+  return side === 'p1' ? FIELD_LEN : 0;
+}
+function forwardSign(side: Side): number {
+  return side === 'p1' ? 1 : -1; // positive Z direction toward enemy
+}
+
+function findAllyClosestToBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = Infinity;
+  for (const u of units) {
+    if (u.side !== side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d < bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function findAllyFarthestFromBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = -1;
+  for (const u of units) {
+    if (u.side !== side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d > bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function findEnemyFarthestFromBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = -1;
+  for (const u of units) {
+    if (u.side === side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d > bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function findEnemyClosestToBase(side: Side): UnitSim | null {
+  const baseZ = getMyBaseZ(side);
+  let best: UnitSim | null = null;
+  let bestD = Infinity;
+  for (const u of units) {
+    if (u.side === side || u.state === 'dead') continue;
+    const d = Math.abs(u.z - baseZ);
+    if (d < bestD) { bestD = d; best = u; }
+  }
+  return best;
+}
+function pickEnemiesNear(side: Side, count: number, fromZ: number): UnitSim[] {
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  enemies.sort((a, b) => Math.abs(a.z - fromZ) - Math.abs(b.z - fromZ));
+  return enemies.slice(0, count);
+}
+function pickAlliesRandom(side: Side, count: number): UnitSim[] {
+  const allies = units.filter(u => u.side === side && u.state !== 'dead');
+  // Fisher-Yates partial shuffle
+  for (let i = 0; i < Math.min(count, allies.length); i++) {
+    const j = i + Math.floor(Math.random() * (allies.length - i));
+    [allies[i], allies[j]] = [allies[j], allies[i]];
+  }
+  return allies.slice(0, count);
+}
+
+function makeFoodProjMesh(foodId: string): THREE.Object3D {
+  const mesh = makeFoodMesh(foodId);
+  scene.add(mesh);
+  return mesh;
+}
+
+// ─── Cast functions (one per food effect) ───────────────────────────────────
+function castApple(side: Side, green: boolean) {
+  const target = findAllyClosestToBase(side);
+  const foodId = green ? 'apple_green' : 'apple';
+  const baseZ = getMyBaseZ(side);
+  const startPos = new THREE.Vector3(0, 5, baseZ);
+  const mesh = makeFoodProjMesh(foodId);
+  mesh.position.copy(startPos);
+  foodProjectiles.push({
+    food: foodId, effect: green ? 'green_apple_buff' : 'apple_buff',
+    type: 'parabola_homing_ally', side, mesh,
+    pos: startPos.clone(), vel: new THREE.Vector3(0, 6, forwardSign(side) * 8),
+    done: false, age: 0, damage: 0, target,
+    spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 4,
+  });
+}
+function castAvocado(side: Side) {
+  const baseZ = getMyBaseZ(side);
+  // Land at midfield for max value
+  const targetZ = baseZ + forwardSign(side) * 12;
+  const targetX = (Math.random() - 0.5) * 4;
+  const startPos = new THREE.Vector3(0, 5, baseZ);
+  const dx = targetX - 0;
+  const dz = targetZ - baseZ;
+  const tFlight = 1.4;
+  const mesh = makeFoodProjMesh('avocado');
+  mesh.position.copy(startPos);
+  foodProjectiles.push({
+    food: 'avocado', effect: 'avocado_slow', type: 'parabola_lob', side, mesh,
+    pos: startPos.clone(),
+    vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+    done: false, age: 0, damage: 0,
+    spinAxis: new THREE.Vector3(1, 0, 1).normalize(), spinSpeed: 6,
+  });
+}
+function castBanana(side: Side) {
+  const target = findEnemyFarthestFromBase(side) ?? findEnemyClosestToBase(side);
+  const baseZ = getMyBaseZ(side);
+  const start = new THREE.Vector3(0, 3, baseZ);
+  // Aim at target X/Z (no parabola — straight line, fast)
+  const targetX = target ? target.x : 0;
+  const targetZ = target ? target.z : baseZ + forwardSign(side) * 20;
+  const dir = new THREE.Vector3(targetX - 0, 0, targetZ - baseZ).normalize();
+  const speed = 30;
+  const mesh = makeFoodProjMesh('banana');
+  mesh.position.copy(start);
+  foodProjectiles.push({
+    food: 'banana', effect: 'banana_boomerang', type: 'banana', side, mesh,
+    pos: start.clone(), vel: dir.multiplyScalar(speed),
+    done: false, age: 0, damage: FOODS.banana.damage ?? 8,
+    basePos: start.clone(), returnPhase: false, hitEnemies: new Set<string>(),
+    spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 18,
+  });
+}
+function castCoconut(side: Side) {
+  const def = FOODS.coconut;
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  // Find densest enemy cluster within 7-unit radius
+  const CLUSTER_R = 7;
+  let bestX = 0;
+  let bestZ = (getMyBaseZ(side) + getEnemyBaseZ(side)) / 2;
+  let bestCount = 0;
+  if (enemies.length > 0) {
+    for (const c of enemies) {
+      let cnt = 0;
+      for (const o of enemies) {
+        const d = Math.sqrt((c.x - o.x) ** 2 + (c.z - o.z) ** 2);
+        if (d < CLUSTER_R) cnt++;
+      }
+      if (cnt > bestCount) { bestCount = cnt; bestX = c.x; bestZ = c.z; }
+    }
+  }
+  // Drop one very large coconut on densest cluster position
+  const landX = bestX + (Math.random() - 0.5) * 1.0;
+  const landZ = bestZ + (Math.random() - 0.5) * 1.0;
+  const start = new THREE.Vector3(landX, 24, landZ);
+  const mesh = makeFoodProjMesh('coconut');
+  mesh.scale.multiplyScalar(4); // massive visual
+  mesh.position.copy(start);
+  foodProjectiles.push({
+    food: 'coconut', effect: 'coconut_drop', type: 'mortar_drop', side, mesh,
+    pos: start.clone(), vel: new THREE.Vector3(0, -18, 0),
+    done: false, age: 0, damage: (def.damage ?? 12) * 2, aoe: 10,
+    spinAxis: new THREE.Vector3(1, 0.3, 0).normalize(), spinSpeed: 12,
+    splitOnLand: false,
+  });
+}
+function castOrange(side: Side) {
+  const def = FOODS.orange;
+  const baseZ = getMyBaseZ(side);
+  const enemyTargets = pickEnemiesNear(side, def.count, baseZ);
+  const start = new THREE.Vector3(0, 4, baseZ);
+  for (let i = 0; i < def.count; i++) {
+    const target = enemyTargets[i] ?? enemyTargets[enemyTargets.length - 1] ?? null;
+    const mesh = makeFoodProjMesh('orange');
+    const offsetX = (Math.random() - 0.5) * 2;
+    const sp = new THREE.Vector3(offsetX, start.y, baseZ);
+    mesh.position.copy(sp);
+    foodProjectiles.push({
+      food: 'orange', effect: 'orange_volley', type: 'parabola_homing_enemy', side, mesh,
+      pos: sp.clone(), vel: new THREE.Vector3((target ? target.x - offsetX : 0) * 0.5, 4, forwardSign(side) * 6),
+      done: false, age: 0, damage: def.damage ?? 4, target,
+      spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 10,
+    });
+  }
+}
+function castPumpkin(side: Side) {
+  const def = FOODS.pumpkin;
+  const baseZ = getMyBaseZ(side);
+  const maxDist = (FIELD_LEN / 2) - 2; // roll about 2/3 toward middle
+  for (let i = 0; i < def.count; i++) {
+    const offsetX = (i - (def.count - 1) / 2) * 2.5;
+    const start = new THREE.Vector3(offsetX, 0.5, baseZ);
+    const mesh = makeFoodProjMesh('pumpkin');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'pumpkin', effect: 'pumpkin_roll', type: 'roll', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(0, 0, forwardSign(side) * 5),
+      done: false, age: 0, damage: def.damage ?? 15,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 8,
+      rollDistMax: maxDist, rollDistAcc: 0,
+      hitEnemies: new Set<string>(),
+    });
+  }
+}
+function castTomato(side: Side) {
+  const def = FOODS.tomato;
+  const baseZ = getMyBaseZ(side);
+  const enemyZ = getEnemyBaseZ(side);
+  // Target ALL enemies within 5 units of enemy base (no count limit)
+  const BASE_RANGE = 5;
+  let targets = units.filter(u => u.side !== side && u.state !== 'dead' && Math.abs(u.z - enemyZ) <= BASE_RANGE);
+  // Fallback: if no enemies near base, target all enemies
+  if (targets.length === 0) targets = units.filter(u => u.side !== side && u.state !== 'dead');
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    const offsetX = (Math.random() - 0.5) * 2;
+    const startY = 3 + Math.random() * 2;
+    const start = new THREE.Vector3(offsetX, startY, baseZ);
+    const mesh = makeFoodProjMesh('tomato');
+    mesh.position.copy(start);
+    const delay = i * 100;
+    const tx = target.x, tz = target.z;
+    const dx = tx - start.x, dz = tz - start.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const tF = Math.max(0.9, dist / 12);
+    setTimeout(() => {
+      foodProjectiles.push({
+        food: 'tomato', effect: 'tomato_lob', type: 'parabola_homing_enemy', side, mesh,
+        pos: start.clone(),
+        vel: new THREE.Vector3(dx / tF, 0.5 * 9.8 * tF, dz / tF),
+        done: false, age: 0, damage: def.damage ?? 3,
+        target,
+        spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 5,
+      });
+    }, delay);
+  }
+}
+function castBroccoli(side: Side) {
+  if (broccoliActive(side)) return;
+  const farAlly = findAllyFarthestFromBase(side);
+  const enemyZ = getEnemyBaseZ(side);
+  let z: number;
+  let x = (Math.random() - 0.5) * 4;
+  if (farAlly) {
+    z = farAlly.z;
+    // Don't let it overlap enemy base
+    if (Math.abs(z - enemyZ) < 5) z = enemyZ + forwardSign(side) * -5;
+  } else {
+    z = getMyBaseZ(side) + forwardSign(side) * 5;
+  }
+  // Spawn as a unit using a synthetic def
+  const def = FOODS.broccoli;
+  const id = `broccoli_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+  const mesh = makeFoodMesh('broccoli');
+  mesh.position.set(x, def.size, z);
+  scene.add(mesh);
+  // Inject ad-hoc AnimalDef so other code paths work
+  const adHocDef: AnimalDef = {
+    id: 'broccoli_barrier', name: '브로콜리', layer: 'ground', attackLayer: 'ground',
+    hp: 30, atk: 0, spd: 0, atkCooldown: 99, range: 0, cost: 0,
+    size: def.size, color: def.color,
+  };
+  if (!ANIMALS['broccoli_barrier']) ANIMALS['broccoli_barrier'] = adHocDef;
+  const unit: UnitSim = {
+    id, animalId: 'broccoli_barrier', side, z, x,
+    hp: 30, maxHp: 30, state: 'attacking',
+    atkTimer: 0, mesh, hpSprite: null, dustMesh: null, lastHp: 30,
+    mixer: null, currentAnim: '',
+  };
+  units.push(unit);
+  broccoliUnits[side] = unit;
+  // Auto-despawn after duration
+  const expireAt = battleClock + (def.duration ?? 5);
+  (unit as any)._broccoliExpire = expireAt;
+}
+function castCarrot(side: Side) {
+  const def = FOODS.carrot;
+  const baseZ = getMyBaseZ(side);
+  // Part 1: Dense carpet of carrot spikes near own base — enemies anywhere in
+  // the base zone will be hit
+  const ZONE_COUNT = 18;
+  const ZONE_DEPTH = 9;
+  const ZONE_WIDTH = 11;
+  for (let i = 0; i < ZONE_COUNT; i++) {
+    const x = (Math.random() - 0.5) * ZONE_WIDTH;
+    const z = baseZ + forwardSign(side) * (0.5 + Math.random() * ZONE_DEPTH);
+    const mesh = makeFoodMesh('carrot');
+    mesh.rotation.x = Math.PI;
+    mesh.position.set(x, def.size, z);
+    scene.add(mesh);
+    foodZones.push({
+      food: 'carrot', type: 'carrot_spike', side, mesh,
+      pos: new THREE.Vector3(x, 0, z),
+      radius: 1.4, // large hitbox
+      endTime: battleClock + (def.duration ?? 3),
+      damageOnContact: def.damage ?? 5,
+    });
+  }
+  // (체인 당근 없음 — 기지 앞 구역 스파이크만)
+}
+function castEggplant(side: Side) {
+  const target = findEnemyClosestToBase(side);
+  const baseZ = getMyBaseZ(side);
+  const targetX = target ? target.x : 0;
+  const targetZ = target ? target.z : baseZ + forwardSign(side) * 8;
+  const start = new THREE.Vector3(0, 4, baseZ);
+  const dx = targetX, dz = targetZ - baseZ;
+  const tFlight = 1.0;
+  const mesh = makeFoodProjMesh('eggplant');
+  mesh.position.copy(start);
+  foodProjectiles.push({
+    food: 'eggplant', effect: 'eggplant_dot', type: 'parabola_lob', side, mesh,
+    pos: start.clone(), vel: new THREE.Vector3(dx / tFlight, 0.5 * 9.8 * tFlight, dz / tFlight),
+    done: false, age: 0, damage: 0,
+    spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 6,
+    zoneOnLand: 'eggplant_dot', aoe: FOODS.eggplant.aoe ?? 3,
+  });
+}
+function castLettuce(side: Side) {
+  const def = FOODS.lettuce;
+  const MAX_LETTUCE = 6;
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  const spawnTargets = enemies.length > 0
+    ? enemies.slice(0, MAX_LETTUCE)
+    : null;
+  if (spawnTargets && spawnTargets.length > 0) {
+    // Spawn one lettuce mine at each enemy's current position
+    for (const e of spawnTargets) {
+      const ox = (Math.random() - 0.5) * 0.8;
+      const oz = (Math.random() - 0.5) * 0.8;
+      const x = e.x + ox, z = e.z + oz;
+      const mesh = makeFoodMesh('lettuce');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'lettuce', type: 'lettuce_mine', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: def.aoe ?? 2,
+        endTime: battleClock + (def.duration ?? 5),
+        damageOnContact: def.damage ?? 12,
+      });
+    }
+  } else {
+    // No enemies: scatter near enemy base
+    const enemyZ = getEnemyBaseZ(side);
+    for (let i = 0; i < 3; i++) {
+      const x = (Math.random() - 0.5) * 7;
+      const z = enemyZ + forwardSign(side) * -(1 + Math.random() * 4);
+      const mesh = makeFoodMesh('lettuce');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'lettuce', type: 'lettuce_mine', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: def.aoe ?? 2,
+        endTime: battleClock + (def.duration ?? 5),
+        damageOnContact: def.damage ?? 12,
+      });
+    }
+  }
+}
+function castMushroom(side: Side) {
+  const def = FOODS.mushroom;
+  const MAX_MUSHROOM = 8;
+  const enemies = units.filter(u => u.side !== side && u.state !== 'dead');
+  const spawnTargets = enemies.length > 0
+    ? enemies.slice(0, MAX_MUSHROOM)
+    : null;
+  if (spawnTargets && spawnTargets.length > 0) {
+    // Spawn one mushroom directly at each enemy's current position
+    for (const e of spawnTargets) {
+      const ox = (Math.random() - 0.5) * 0.6;
+      const oz = (Math.random() - 0.5) * 0.6;
+      const x = e.x + ox, z = e.z + oz;
+      const mesh = makeFoodMesh('mushroom');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'mushroom', type: 'mushroom_paralyze', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: 1.0,
+        endTime: battleClock + 20,
+        paralyzeDuration: def.duration ?? 2,
+      });
+    }
+  } else {
+    // No enemies: scatter across the field near enemy side
+    const enemyZ = getEnemyBaseZ(side);
+    for (let i = 0; i < 4; i++) {
+      const x = (Math.random() - 0.5) * 9;
+      const z = enemyZ + forwardSign(side) * -(2 + Math.random() * 8);
+      const mesh = makeFoodMesh('mushroom');
+      mesh.position.set(x, def.size, z);
+      scene.add(mesh);
+      foodZones.push({
+        food: 'mushroom', type: 'mushroom_paralyze', side, mesh,
+        pos: new THREE.Vector3(x, 0, z), radius: 1.0,
+        endTime: battleClock + 20,
+        paralyzeDuration: def.duration ?? 2,
+      });
+    }
+  }
+}
+function castPepperGreen(side: Side) {
+  const def = FOODS.pepper_green;
+  const targets = pickAlliesRandom(side, def.count);
+  const baseZ = getMyBaseZ(side);
+  const start = new THREE.Vector3(0, 4, baseZ);
+  for (const target of targets) {
+    const mesh = makeFoodProjMesh('pepper_green');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'pepper_green', effect: 'pepper_green_heal', type: 'parabola_homing_ally',
+      side, mesh, pos: start.clone(),
+      vel: new THREE.Vector3((target.x - 0) * 0.7, 5, (target.z - baseZ) * 0.5),
+      done: false, age: 0, damage: 0, target,
+      spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 8,
+    });
+  }
+}
+function castPepperRed(side: Side) {
+  const def = FOODS.pepper_red;
+  const baseZ = getMyBaseZ(side);
+  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  const start = new THREE.Vector3(0, 4, baseZ);
+  for (const target of enemies) {
+    const mesh = makeFoodProjMesh('pepper_red');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'pepper_red', effect: 'pepper_red_dot', type: 'parabola_homing_enemy',
+      side, mesh, pos: start.clone(),
+      vel: new THREE.Vector3((target.x - 0) * 0.7, 5, (target.z - baseZ) * 0.5),
+      done: false, age: 0, damage: 0, target,
+      spinAxis: new THREE.Vector3(0, 1, 0), spinSpeed: 8,
+    });
+  }
+}
+function castTurnip(side: Side) {
+  const def = FOODS.turnip;
+  const baseZ = getMyBaseZ(side);
+  // spawn turnips at enemy positions, jumping up
+  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  for (let i = 0; i < def.count; i++) {
+    const target = enemies[i];
+    const x = target ? target.x : (Math.random() - 0.5) * 8;
+    const z = target ? target.z : baseZ + forwardSign(side) * (8 + i * 3);
+    const start = new THREE.Vector3(x, 0, z);
+    const mesh = makeFoodProjMesh('turnip');
+    mesh.position.copy(start);
+    foodProjectiles.push({
+      food: 'turnip', effect: 'turnip_uppercut', type: 'turnip', side, mesh,
+      pos: start.clone(), vel: new THREE.Vector3(0, 9, 0),
+      done: false, age: 0, damage: def.damage ?? 8,
+      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 10,
+      hitEnemies: new Set<string>(),
+    });
+  }
+}
+function castEgg(side: Side) {
+  const def = FOODS.egg;
+  const baseZ = getMyBaseZ(side);
+  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  for (let i = 0; i < def.count; i++) {
+    const target = enemies[i] ?? null;
+    const offsetX = (Math.random() - 0.5) * 3;
+    const start = new THREE.Vector3(offsetX, 3, baseZ);
+    const tx = target ? target.x : offsetX;
+    const tz = target ? target.z : baseZ + forwardSign(side) * (8 + i * 3);
+    const dx = tx - offsetX, dz = tz - baseZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const tF = Math.max(0.8, dist / 12);
+    const mesh = makeFoodProjMesh('egg');
+    mesh.position.copy(start);
+    // Parabola + homing: gravity applied in movement, horizontal steering toward target
+    foodProjectiles.push({
+      food: 'egg', effect: 'egg_drop', type: 'parabola_homing_enemy', side, mesh,
+      pos: start.clone(),
+      vel: new THREE.Vector3(dx / tF, 0.5 * 9.8 * tF, dz / tF),
+      done: false, age: 0, damage: def.damage ?? 3,
+      target,
+      spawnChickOnImpact: true,
+      // no spinAxis/spinSpeed → no tumbling
+    });
+  }
+}
+
+function triggerFoodEffect(foodId: string, side: Side) {
+  switch (foodId) {
+    case 'apple':       castApple(side, false); break;
+    case 'apple_green': castApple(side, true); break;
+    case 'avocado':     castAvocado(side); break;
+    case 'banana':      castBanana(side); break;
+    case 'coconut':     castCoconut(side); break;
+    case 'orange':      castOrange(side); break;
+    case 'pumpkin':     castPumpkin(side); break;
+    case 'tomato':      castTomato(side); break;
+    case 'broccoli':    castBroccoli(side); break;
+    case 'carrot':      castCarrot(side); break;
+    case 'eggplant':    castEggplant(side); break;
+    case 'lettuce':     castLettuce(side); break;
+    case 'mushroom':    castMushroom(side); break;
+    case 'pepper_green': castPepperGreen(side); break;
+    case 'pepper_red':   castPepperRed(side); break;
+    case 'turnip':      castTurnip(side); break;
+    case 'egg':         castEgg(side); break;
+  }
+}
+
+// ─── Step functions ──────────────────────────────────────────────────────────
+function applyAppleBuff(u: UnitSim, green: boolean) {
+  if (green) {
+    if (u.greenAppleBuffed) return;
+    u.greenAppleBuffed = true;
+    u.maxHp *= 2;
+    u.hp = Math.min(u.maxHp, u.hp * 2);
+  } else {
+    if (u.appleBuffed) return;
+    u.appleBuffed = true;
+  }
+  u.visualScale = (u.visualScale ?? 1) * 2;
+  if (u.mesh) {
+    const cur = u.mesh.scale.x;
+    u.mesh.scale.setScalar(cur * 2);
+  }
+}
+
+function stepFoodProjectiles(dt: number) {
+  for (const p of foodProjectiles) {
+    if (p.done) continue;
+    p.age += dt;
+    // Spin visual
+    if (p.mesh && p.spinAxis && p.spinSpeed) {
+      p.mesh.rotateOnAxis(p.spinAxis, p.spinSpeed * dt);
+    }
+    // Movement
+    switch (p.type) {
+      case 'parabola_lob':
+      case 'parabola_homing_enemy':
+      case 'parabola_homing_ally':
+      case 'mortar_drop': {
+        // Simple gravity
+        p.vel.y -= 9.8 * dt;
+        // Light homing for homing variants (steer toward target)
+        if (p.target && (p.type === 'parabola_homing_ally' || p.type === 'parabola_homing_enemy')) {
+          if (p.target.state === 'dead') p.target = null;
+          if (p.target) {
+            const dx = p.target.x - p.pos.x;
+            const dz = p.target.z - p.pos.z;
+            const d = Math.sqrt(dx*dx + dz*dz);
+            if (d > 0.01) {
+              const k = 6 * dt;
+              p.vel.x += (dx / d) * k * 4;
+              p.vel.z += (dz / d) * k * 4;
+            }
+          }
+        }
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+      case 'banana': {
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+      case 'roll': {
+        p.pos.addScaledVector(p.vel, dt);
+        p.pos.y = (FOODS.pumpkin.size ?? 0.5);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        p.rollDistAcc = (p.rollDistAcc ?? 0) + Math.abs(p.vel.z) * dt;
+        if (p.rollDistAcc >= (p.rollDistMax ?? 12)) p.done = true;
+        break;
+      }
+      case 'turnip': {
+        p.vel.y -= 9.8 * dt;
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        if (p.pos.y <= 0 && p.age > 0.2) p.done = true;
+        break;
+      }
+      case 'homing_missile': {
+        // Retarget if current target died
+        if (p.target && p.target.state === 'dead') {
+          let nearest: UnitSim | null = null;
+          let nearestD = Infinity;
+          for (const u of units) {
+            if (u.side === p.side || u.state === 'dead') continue;
+            const d = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+            if (d < nearestD) { nearestD = d; nearest = u; }
+          }
+          p.target = nearest;
+        }
+        if (p.target) {
+          const tx = p.target.x;
+          const ty = (p.target.mesh?.position.y ?? 0) + 0.5;
+          const tz = p.target.z;
+          const dx = tx - p.pos.x, dy = ty - p.pos.y, dz = tz - p.pos.z;
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          const speed = 14;
+          if (d > 0.1) {
+            const want = new THREE.Vector3(dx / d * speed, dy / d * speed, dz / d * speed);
+            p.vel.lerp(want, Math.min(dt * 6, 1));
+          }
+        }
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+      case 'carrot_chain': {
+        // Parabolic arc with horizontal homing toward current target
+        p.vel.y -= 9.8 * dt;
+        if (p.target && p.target.state !== 'dead') {
+          const dx = p.target.x - p.pos.x;
+          const dz = p.target.z - p.pos.z;
+          const d = Math.sqrt(dx * dx + dz * dz);
+          if (d > 0.01) {
+            p.vel.x += (dx / d) * 28 * dt; // strong horizontal homing
+            p.vel.z += (dz / d) * 28 * dt;
+          }
+        }
+        p.pos.addScaledVector(p.vel, dt);
+        if (p.mesh) p.mesh.position.copy(p.pos);
+        break;
+      }
+    }
+
+    // Collision logic per effect
+    if (p.done) continue;
+
+    // ── homing_missile: proximity hit ─────────────────────────────────────────
+    if (p.type === 'homing_missile') {
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.0) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          if (p.spawnChickOnImpact && Math.random() < 0.5) {
+            spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
+          }
+          sfx('food_hit'); p.done = true;
+        }
+      } else if (!p.target) {
+        p.done = true;
+      }
+      if (p.age > 10) p.done = true;
+      continue;
+    }
+
+    // ── carrot_chain: parabola hit + chain relaunch ───────────────────────────
+    if (p.type === 'carrot_chain') {
+      // Retarget if dead
+      if (p.target && p.target.state === 'dead') p.target = null;
+
+      let hitTarget = false;
+      if (p.target) {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.1) hitTarget = true;
+      }
+      // Also chain when hitting the ground (missed target)
+      const groundHit = p.pos.y < 0 && p.age > 0.3;
+
+      if (hitTarget || groundHit) {
+        if (hitTarget && p.target) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          p.chainHitEnemies?.add(p.target.id);
+          sfx('food_hit');
+        }
+        // Find next unhit enemy
+        let next: UnitSim | null = null;
+        let nextD = Infinity;
+        for (const u of units) {
+          if (u.side === p.side || u.state === 'dead') continue;
+          if (p.chainHitEnemies?.has(u.id)) continue;
+          const du = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+          if (du < nextD) { nextD = du; next = u; }
+        }
+        if (next) {
+          p.target = next;
+          // Relaunch from current position with a fresh parabola arc
+          p.pos.y = Math.max(p.pos.y, 0.3);
+          const ddx = next.x - p.pos.x, ddz = next.z - p.pos.z;
+          const dist2 = Math.sqrt(ddx * ddx + ddz * ddz);
+          const tF2 = Math.max(0.6, dist2 / 14);
+          p.vel.set(ddx / tF2, 0.5 * 9.8 * tF2, ddz / tF2);
+        } else {
+          p.done = true; // all enemies hit
+        }
+      }
+      if (p.age > 25) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'apple_buff' || p.effect === 'green_apple_buff') {
+      // Reach target ally → apply buff
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x)**2 + (p.pos.z - p.target.z)**2);
+        if (d < 1.0) {
+          applyAppleBuff(p.target, p.effect === 'green_apple_buff');
+          p.done = true;
+        }
+      } else if (!p.target || p.pos.y < -2) {
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'pepper_green_heal') {
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x)**2 + (p.pos.z - p.target.z)**2);
+        if (d < 1.0) {
+          p.target.hotEndTime = battleClock + (FOODS.pepper_green.duration ?? 3);
+          p.target.hotPerSec = 10;
+          p.target.hotNextTick = battleClock + 1;
+          p.done = true;
+        }
+      } else if (!p.target || p.pos.y < -2) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'pepper_red_dot') {
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x)**2 + (p.pos.z - p.target.z)**2);
+        if (d < 1.0) {
+          p.target.dotEndTime = battleClock + (FOODS.pepper_red.duration ?? 3);
+          p.target.dotPerSec = 10;
+          p.target.dotNextTick = battleClock + 1;
+          p.done = true;
+        }
+      } else if (!p.target || p.pos.y < -2) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'orange_volley') {
+      // Hit enemy on contact OR ground
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && e.state !== 'underground');
+      let hit = false;
+      for (const e of enemies) {
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.4) {
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+          hit = true;
+          break;
+        }
+      }
+      if (hit || p.pos.y < 0) { sfx('food_hit'); p.done = true; }
+      continue;
+    }
+
+    if (p.effect === 'tomato_lob') {
+      // Primary: proximity hit on target (homing)
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.1) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          sfx('food_hit'); p.done = true;
+        }
+      }
+      // Fallback: ground impact (target died before we reached it)
+      if (!p.done && p.pos.y < 0) {
+        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
+        for (const e of enemies) {
+          const ed = Math.sqrt((p.pos.x - e.x) ** 2 + (p.pos.z - e.z) ** 2);
+          if (ed < 1.4) { e.hp = Math.max(0, e.hp - p.damage); if (e.hp <= 0) e.state = 'dead'; }
+        }
+        sfx('food_hit'); p.done = true;
+      }
+      if (p.age > 8) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'coconut_drop') {
+      if (p.pos.y <= 0.2) {
+        p.pos.y = 0;
+        // Expanding shockwave ring (AOE damage as ring expands)
+        triggerCoconutShockwave(p.pos.x, p.pos.z, p.side, p.damage, p.aoe ?? 10);
+        // Split-halves visual — same enlarged scale as the projectile
+        if (p.mesh) scene.remove(p.mesh);
+        const halfL = makeFoodMesh('coconut_half');
+        const halfR = makeFoodMesh('coconut_half');
+        const bigScale = (foodModelScales['coconut'] ?? 1) * 4;
+        halfL.scale.setScalar(bigScale);
+        halfR.scale.setScalar(bigScale);
+        halfL.position.set(p.pos.x - 1.0, FOODS.coconut.size * 2, p.pos.z);
+        halfR.position.set(p.pos.x + 1.0, FOODS.coconut.size * 2, p.pos.z);
+        halfR.rotation.y = Math.PI;
+        scene.add(halfL); scene.add(halfR);
+        setTimeout(() => { scene.remove(halfL); scene.remove(halfR); }, 700);
+        p.mesh = null;
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'banana_boomerang') {
+      if (!p.returnPhase) {
+        // Chain phase: hit enemies one by one and redirect
+        const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
+        for (const e of enemies) {
+          if (p.hitEnemies?.has(e.id)) continue;
+          const ed = Math.sqrt((p.pos.x - e.x) ** 2 + (p.pos.z - e.z) ** 2);
+          if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.5) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+            p.hitEnemies?.add(e.id);
+            // Find next unhit enemy closest to current position
+            let next: UnitSim | null = null;
+            let nextD = Infinity;
+            for (const u of units) {
+              if (u.side === p.side || u.state === 'dead') continue;
+              if (p.hitEnemies?.has(u.id)) continue;
+              const du = Math.sqrt((p.pos.x - u.x) ** 2 + (p.pos.z - u.z) ** 2);
+              if (du < nextD) { nextD = du; next = u; }
+            }
+            if (next) {
+              // Redirect toward next enemy at same speed
+              const spd = Math.sqrt(p.vel.x ** 2 + p.vel.z ** 2);
+              const dx = next.x - p.pos.x, dz = next.z - p.pos.z;
+              const d = Math.sqrt(dx * dx + dz * dz);
+              if (d > 0.01) { p.vel.x = (dx / d) * spd; p.vel.z = (dz / d) * spd; }
+            } else {
+              // All enemies hit — return to base
+              p.returnPhase = true;
+              const bx = p.basePos?.x ?? 0, bz = p.basePos?.z ?? p.pos.z;
+              const spd = Math.sqrt(p.vel.x ** 2 + p.vel.z ** 2);
+              const dx = bx - p.pos.x, dz = bz - p.pos.z;
+              const d = Math.sqrt(dx * dx + dz * dz);
+              if (d > 0.01) { p.vel.x = (dx / d) * spd; p.vel.z = (dz / d) * spd; }
+            }
+            break; // one redirect per frame
+          }
+        }
+        // Fallback: if no enemies exist at all, return to base
+        if (!p.returnPhase && enemies.length === 0) {
+          p.returnPhase = true;
+          const bx = p.basePos?.x ?? 0, bz = p.basePos?.z ?? p.pos.z;
+          const spd = Math.sqrt(p.vel.x ** 2 + p.vel.z ** 2);
+          const dx = bx - p.pos.x, dz = bz - p.pos.z;
+          const d = Math.sqrt(dx * dx + dz * dz);
+          if (d > 0.01) { p.vel.x = (dx / d) * spd; p.vel.z = (dz / d) * spd; }
+        }
+      } else {
+        // Return phase: fly back to base, no more hits
+        if (p.basePos) {
+          const db = Math.sqrt((p.pos.x - p.basePos.x) ** 2 + (p.pos.z - p.basePos.z) ** 2);
+          if (db < 1.5) p.done = true;
+        }
+      }
+      if (p.age > 30) p.done = true;
+      continue;
+    }
+
+    if (p.effect === 'pumpkin_roll') {
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+      for (const e of enemies) {
+        if (p.hitEnemies?.has(e.id)) continue;
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        if (ed < (ANIMALS[e.animalId]?.size ?? 0.4) + 0.7) {
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+          p.hitEnemies?.add(e.id);
+        }
+      }
+      continue;
+    }
+
+    if (p.effect === 'eggplant_dot') {
+      if (p.pos.y < 0) {
+        // Spawn DOT zone
+        p.pos.y = 0;
+        const radius = p.aoe ?? 3;
+        const ring = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 28),
+          new THREE.MeshBasicMaterial({ color: 0x6a0dad, transparent: true, opacity: 0.45, depthWrite: false })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(p.pos.x, 0.02, p.pos.z);
+        scene.add(ring);
+        foodZones.push({
+          food: 'eggplant', type: 'eggplant_dot', side: p.side, mesh: ring,
+          pos: new THREE.Vector3(p.pos.x, 0, p.pos.z), radius,
+          endTime: battleClock + (FOODS.eggplant.duration ?? 5),
+          damagePerSec: 5,
+        });
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'avocado_slow') {
+      if (p.pos.y < 0) {
+        p.pos.y = 0;
+        const radius = FOODS.avocado.aoe ?? 4;
+        const ring = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 28),
+          new THREE.MeshBasicMaterial({ color: 0x6c8c40, transparent: true, opacity: 0.40, depthWrite: false })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(p.pos.x, 0.02, p.pos.z);
+        scene.add(ring);
+        // Pit visual: leave a mini avocado mesh
+        const pit = makeFoodMesh('avocado');
+        pit.position.set(p.pos.x, FOODS.avocado.size, p.pos.z);
+        scene.add(pit);
+        foodZones.push({
+          food: 'avocado', type: 'avocado_slow', side: p.side, mesh: pit, ringMesh: ring,
+          pos: new THREE.Vector3(p.pos.x, 0, p.pos.z), radius,
+          endTime: battleClock + (FOODS.avocado.duration ?? 5),
+          slowFactor: 0.4,
+        });
+        p.done = true;
+      }
+      continue;
+    }
+
+    if (p.effect === 'turnip_uppercut') {
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+      for (const e of enemies) {
+        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
+        const ey = (e.mesh?.position.y ?? 0);
+        const dy = Math.abs(p.pos.y - ey - 0.4);
+        if (ed < 0.6 && dy < 0.6) {
+          // Re-hittable cycle: track via hitEnemies but clear when leaves
+          if (!p.hitEnemies?.has(e.id)) {
+            e.hp = Math.max(0, e.hp - p.damage);
+            if (e.hp <= 0) e.state = 'dead';
+            p.hitEnemies?.add(e.id);
+          }
+        } else {
+          p.hitEnemies?.delete(e.id);
+        }
+      }
+      continue;
+    }
+
+    if (p.effect === 'egg_drop') {
+      // Primary: proximity hit on homing target
+      if (p.target && p.target.state !== 'dead') {
+        const d = Math.sqrt((p.pos.x - p.target.x) ** 2 + (p.pos.z - p.target.z) ** 2);
+        if (d < 1.0) {
+          p.target.hp = Math.max(0, p.target.hp - p.damage);
+          if (p.target.hp <= 0) p.target.state = 'dead';
+          if (p.spawnChickOnImpact && Math.random() < 0.5) {
+            spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
+          }
+          sfx('food_hit'); p.done = true;
+        }
+      }
+      // Fallback: ground impact
+      if (!p.done && p.pos.y <= 0.2) {
+        if (p.spawnChickOnImpact && Math.random() < 0.5) {
+          spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
+        }
+        sfx('food_hit'); p.done = true;
+      }
+      if (p.age > 8) p.done = true;
+      continue;
+    }
+  }
+
+  // Cleanup
+  for (let i = foodProjectiles.length - 1; i >= 0; i--) {
+    if (foodProjectiles[i].done) {
+      const m = foodProjectiles[i].mesh;
+      if (m) scene.remove(m);
+      foodProjectiles.splice(i, 1);
+    }
+  }
+}
+
+function stepFoodZones(dt: number) {
+  const now = battleClock;
+  for (const z of foodZones) {
+    // Visual age fade for ring meshes
+    if (z.ringMesh) {
+      const remain = z.endTime - now;
+      const ringMat = z.ringMesh.material as THREE.MeshBasicMaterial;
+      if (remain < 1) ringMat.opacity = Math.max(0, remain * 0.4);
+    }
+    if (z.used || now > z.endTime) continue;
+    const enemies = units.filter(e => e.side !== z.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
+
+    if (z.type === 'avocado_slow') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < z.radius) {
+          e.slowedUntil = now + 0.05; // refreshed every frame while inside
+          e.slowFactor = z.slowFactor ?? 0.4;
+        }
+      }
+    } else if (z.type === 'eggplant_dot') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < z.radius) {
+          e.hp = Math.max(0, e.hp - (z.damagePerSec ?? 5) * dt);
+          if (e.hp <= 0) e.state = 'dead';
+        }
+      }
+    } else if (z.type === 'lettuce_mine') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < 0.8) {
+          // Explode: AOE damage
+          for (const e2 of enemies) {
+            const d2 = Math.sqrt((z.pos.x - e2.x)**2 + (z.pos.z - e2.z)**2);
+            if (d2 < (z.radius ?? 2)) {
+              e2.hp = Math.max(0, e2.hp - (z.damageOnContact ?? 12));
+              if (e2.hp <= 0) e2.state = 'dead';
+            }
+          }
+          z.used = true;
+          break;
+        }
+      }
+    } else if (z.type === 'carrot_spike') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < (z.radius ?? 0.6)) {
+          // Once-per-second per spike (use ageInjected as last-hit timer)
+          const lastHit = z.ageInjected ?? -1;
+          if (now - lastHit > 0.5) {
+            e.hp = Math.max(0, e.hp - (z.damageOnContact ?? 5));
+            if (e.hp <= 0) e.state = 'dead';
+            z.ageInjected = now;
+          }
+        }
+      }
+    } else if (z.type === 'mushroom_paralyze') {
+      for (const e of enemies) {
+        const d = Math.sqrt((z.pos.x - e.x)**2 + (z.pos.z - e.z)**2);
+        if (d < (z.radius ?? 0.7)) {
+          e.paralyzedUntil = now + (z.paralyzeDuration ?? 2);
+          z.used = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Cleanup expired/used
+  for (let i = foodZones.length - 1; i >= 0; i--) {
+    const z = foodZones[i];
+    if (z.used || now > z.endTime) {
+      if (z.mesh) scene.remove(z.mesh);
+      if (z.ringMesh) scene.remove(z.ringMesh);
+      foodZones.splice(i, 1);
+    }
+  }
+}
+
+function stepFoodBuffs(_dt: number) {
+  const now = battleClock;
+  for (const u of units) {
+    // Heal-over-time (pepper_green)
+    if (u.hotEndTime && now < u.hotEndTime) {
+      if (u.hotNextTick && now >= u.hotNextTick) {
+        u.hp = Math.min(u.maxHp, u.hp + (u.hotPerSec ?? 10));
+        u.hotNextTick = (u.hotNextTick ?? now) + 1;
+      }
+    } else if (u.hotEndTime) {
+      u.hotEndTime = undefined;
+    }
+    // Damage-over-time (pepper_red)
+    if (u.dotEndTime && now < u.dotEndTime && u.state !== 'dead') {
+      if (u.dotNextTick && now >= u.dotNextTick) {
+        u.hp = Math.max(0, u.hp - (u.dotPerSec ?? 10));
+        if (u.hp <= 0) u.state = 'dead';
+        u.dotNextTick = (u.dotNextTick ?? now) + 1;
+      }
+    } else if (u.dotEndTime) {
+      u.dotEndTime = undefined;
+    }
+  }
+  // Broccoli auto-despawn
+  for (const side of ['p1','p2'] as Side[]) {
+    const u = broccoliUnits[side];
+    if (u && (u as any)._broccoliExpire && now > (u as any)._broccoliExpire) {
+      u.state = 'dead';
+      u.hp = 0;
+      broccoliUnits[side] = null;
+    }
+  }
+}
+
 function updateSiegeButtons() {
   const myBallista = localSide === 'p1' ? p1Ballista : p2Ballista;
   const myCatapult = localSide === 'p1' ? p1Catapult : p2Catapult;
@@ -768,7 +2064,6 @@ let loggedInUsername = '';
 let loggedInUserId = '';
 let playerGold = 0;
 let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
-const GOLD_PER_WIN = 10;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
 
@@ -797,6 +2092,18 @@ interface UnitSim {
   evadeLabel?: THREE.Sprite | null;
   evadeLabelTimer?: number;
   bossLabel?: THREE.Sprite | null; // boss name label above unit
+  // ─── Food magic effects ───
+  appleBuffed?: boolean;         // 사과: ATK ×2, ATKSPD ×2 (영구)
+  greenAppleBuffed?: boolean;    // 초록사과: HP ×2, SPD ×2 (영구)
+  visualScale?: number;          // multiplier on mesh.scale (food can grow unit ×2)
+  hotEndTime?: number;           // 초록 피망: heal-over-time end
+  hotPerSec?: number;            // hp restored per second
+  hotNextTick?: number;          // next tick time
+  dotEndTime?: number;           // 빨간 피망: damage-over-time end
+  dotPerSec?: number;
+  dotNextTick?: number;
+  slowedUntil?: number;          // 아보카도 zone slow flag (frame-evaluated, not timestamp)
+  slowFactor?: number;           // ground speed multiplier (0.4 = 60% slow)
 }
 
 interface BaseSim {
@@ -816,7 +2123,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.domElement.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:50vh;z-index:0;';
 document.body.style.margin = '0';
 document.body.style.overflow = 'hidden';
-document.body.style.background = '#0b1020';
+document.body.style.background = '#87ceeb';
 document.body.appendChild(renderer.domElement);
 
 function resizeRenderer() {
@@ -827,18 +2134,22 @@ function resizeRenderer() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a2540);
-scene.fog = new THREE.Fog(0x1a2540, 50, 80);
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0xb0dff0, 40, 90);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
 
-// Lighting
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-const sun = new THREE.DirectionalLight(0xfff5e0, 1.0);
-sun.position.set(5, 12, -5);
+// Lighting — 양쪽 대칭 조명
+scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+scene.add(new THREE.HemisphereLight(0x87ceeb, 0x5aab3a, 0.6));
+const sun = new THREE.DirectionalLight(0xfffde0, 1.1);
+sun.position.set(8, 20, -6);
 scene.add(sun);
+const sun2 = new THREE.DirectionalLight(0xfffde0, 1.1); // 반대편 조명
+sun2.position.set(-8, 20, -6);
+scene.add(sun2);
 
 // ─── Camera Pan ───────────────────────────────────────────────────────────────
 let camPan = 0;
@@ -872,28 +2183,22 @@ renderer.domElement.addEventListener('pointercancel', () => {
 
 // ─── Field Geometry ───────────────────────────────────────────────────────────
 function buildField() {
-  // Ground
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(12, FIELD_LEN + 4),
-    new THREE.MeshStandardMaterial({ color: 0x3a5c3a, roughness: 1 })
+    new THREE.PlaneGeometry(20, FIELD_LEN + 20),
+    new THREE.MeshStandardMaterial({ color: 0x6db84a, roughness: 0.9 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, -0.01, FIELD_LEN / 2);
   scene.add(ground);
 
-  // Center lane
   const lane = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.5, FIELD_LEN),
-    new THREE.MeshStandardMaterial({ color: 0x4a7040, roughness: 1 })
+    new THREE.PlaneGeometry(2.8, FIELD_LEN + 4),
+    new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 1.0 })
   );
   lane.rotation.x = -Math.PI / 2;
-  lane.position.set(0, 0, FIELD_LEN / 2);
+  lane.position.set(0, 0.005, FIELD_LEN / 2);
   scene.add(lane);
 
-  // Grid lines
-  const grid = new THREE.GridHelper(FIELD_LEN + 4, 12, 0x2a4a2a, 0x2a4a2a);
-  grid.position.set(0, 0.01, FIELD_LEN / 2);
-  scene.add(grid);
 }
 buildField();
 
@@ -1069,11 +2374,11 @@ let p1Base!: BaseSim;
 let p2Base!: BaseSim;
 let unitIdCounter = 0;
 
-function spawnUnit(animalId: string, side: Side, forcedId?: string): UnitSim {
+function spawnUnit(animalId: string, side: Side, forcedId?: string, forcedX?: number, forcedZ?: number): UnitSim {
   const def = ANIMALS[animalId];
   const id = forcedId ?? `u${++unitIdCounter}`;
-  const z = side === 'p1' ? SPAWN_P1 : SPAWN_P2;
-  const x = (Math.random() - 0.5) * 5;
+  const z = forcedZ ?? (side === 'p1' ? SPAWN_P1 : SPAWN_P2);
+  const x = forcedX ?? (Math.random() - 0.5) * 5;
 
   const mesh = makeUnitMesh(def, side);
   const yPos = def.layer === 'air' ? AIR_Y : def.size;
@@ -1171,11 +2476,12 @@ function canAttackEnemy(def: AnimalDef, enemyDef: AnimalDef): boolean {
 
 // AOE wrapper: hit primary target + all enemies within def.aoe radius
 function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allEnemies: UnitSim[], now: number) {
-  dealDamage(attacker, primary, def.atk, now);
+  const atk = attacker.appleBuffed ? def.atk * 2 : def.atk;
+  dealDamage(attacker, primary, atk, now);
   if (def.aoe) {
     for (const e of allEnemies) {
       if (e !== primary && Math.abs(e.z - primary.z) <= def.aoe && e.state !== 'dead') {
-        dealDamage(attacker, e, def.atk, now);
+        dealDamage(attacker, e, atk, now);
       }
     }
   }
@@ -1283,6 +2589,21 @@ function stepUnits(dt: number) {
   }
 }
 
+// Food buff helpers — read effective stats with apple/green-apple/avocado mods
+function effSpd(u: UnitSim, def: AnimalDef): number {
+  let s = def.spd;
+  if (u.greenAppleBuffed) s *= 2;
+  // Avocado slow (refreshed each frame while inside zone)
+  if (u.slowedUntil && battleClock < u.slowedUntil) s *= (u.slowFactor ?? 1);
+  return s;
+}
+function effAtk(u: UnitSim, def: AnimalDef): number {
+  return u.appleBuffed ? def.atk * 2 : def.atk;
+}
+function effAtkCooldown(u: UnitSim, def: AnimalDef): number {
+  return u.appleBuffed ? def.atkCooldown / 2 : def.atkCooldown;
+}
+
 function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, enemies: UnitSim[], base: BaseSim, now: number) {
   const attackable = enemies.filter(e => canAttackEnemy(def, ANIMALS[e.animalId]));
   let closest: UnitSim | null = null;
@@ -1308,29 +2629,29 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
   if (def.ranged) {
     if (closest && closestDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = def.atkCooldown; }
+      if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); sfx('attack'); }
       return;
     }
     if (baseDist <= def.range) {
       u.state = 'attacking';
-      if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
+      if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); sfx('base_hit'); }
       return;
     }
-    u.state = 'moving'; u.z += dir * def.spd * dt; return;
+    u.state = 'moving'; u.z += dir * effSpd(u, def) * dt; return;
   }
 
   if (closest && closestDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); sfx('attack'); }
     return;
   }
   if (baseDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); sfx('base_hit'); }
     return;
   }
   u.state = 'moving';
-  u.z += dir * def.spd * dt;
+  u.z += dir * effSpd(u, def) * dt;
 }
 
 function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base: BaseSim, now: number) {
@@ -1357,7 +2678,7 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
   }
   if (baseDist <= def.range) {
     u.state = 'attacking';
-    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; }
+    if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; sfx('base_hit'); }
     return;
   }
   if (nearest) { u.state = 'moving'; u.z += dir * def.spd * dt; return; }
@@ -1447,6 +2768,14 @@ function syncUnitMeshes() {
   }
 
   for (const u of toRemove) {
+    if (gameMode === '1p' && u.side === 'p2' && battleActive) {
+      if (u.animalId in BOSS_DEFS) {
+        p1BossesKilled++;
+        if (u.animalId === 'dragon') p1DragonKilled = true;
+      } else if (u.animalId.startsWith('m_')) {
+        p1MonstersKilled++;
+      }
+    }
     removeUnitMeshes(u);
     units = units.filter(x => x.id !== u.id);
   }
@@ -1480,6 +2809,11 @@ let multiplayerTimeLeft = 120;
 let currentWord = wordList[0];
 let currentChoices: string[] = [];
 let correctIdx = 0;
+// ─── Battle Stats (for result screen) ────────────────────────────────────────
+let p1MonstersKilled = 0;
+let p1BossesKilled = 0;
+let p1DragonKilled = false;
+let correctWords: { en: string; ko: string }[] = [];
 let isTypingMode = false;
 
 // 2P socket state
@@ -1517,22 +2851,26 @@ document.body.insertAdjacentHTML('beforeend', `
   .animal-card{padding:12px 16px;border-radius:12px;border:2px solid rgba(80,200,60,0.2);background:rgba(12,35,8,0.75);min-width:110px;text-align:center;font-size:13px;cursor:default;}
   .animal-card .aname{font-size:15px;font-weight:700;margin-bottom:6px;}
   .animal-card .astat{opacity:0.75;line-height:1.6;}
+  #screen-deck{background:linear-gradient(rgba(5,18,3,0.78),rgba(5,18,3,0.78)),url('${import.meta.env.BASE_URL}ui/PNG/menu/bg.png') center/cover no-repeat;}
+  @keyframes chest-shake{0%,100%{transform:translateX(0) rotate(0deg);}20%{transform:translateX(-8px) rotate(-3deg);}40%{transform:translateX(8px) rotate(3deg);}60%{transform:translateX(-6px) rotate(-2deg);}80%{transform:translateX(6px) rotate(2deg);}}
+  .chest-shaking{animation:chest-shake 0.55s ease-in-out;}
+  .chest-card{background:rgba(10,25,6,0.82);border:2px solid rgba(80,200,60,0.2);border-radius:16px;padding:14px 10px;display:flex;flex-direction:column;align-items:center;gap:10px;}
   @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 
 <!-- INITIAL -->
 <div id="screen-initial" class="screen">
-  <div class="jui-title">🦁 Zoo Battle</div>
+  <div class="jui-title">Zoo Battle</div>
   <div style="display:flex;flex-direction:column;align-items:center;gap:14px;width:248px;">
-    <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">▶ 시작하기</button>
-    <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">🔑 로그인 (진행상황 불러오기)</button>
+    <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">시작하기</button>
+    <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">로그인 (진행상황 불러오기)</button>
   </div>
 </div>
 
 <!-- LOGIN -->
 <div id="screen-login" class="screen hidden">
   <div class="jui-panel">
-    <h2 style="text-align:center;margin-bottom:4px;">🔑 로그인</h2>
+    <h2 style="text-align:center;margin-bottom:4px;">로그인</h2>
     <input class="field" id="in-login-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-login-pw" type="password" placeholder="비밀번호" autocomplete="current-password">
     <div id="login-error" style="color:#ff9090;font-size:13px;min-height:18px;text-align:center;"></div>
@@ -1545,8 +2883,8 @@ document.body.insertAdjacentHTML('beforeend', `
 <!-- SIGNUP -->
 <div id="screen-signup" class="screen hidden">
   <div class="jui-panel">
-    <h2 style="text-align:center;margin-bottom:4px;">✏️ 아이디 생성</h2>
-    <div id="signup-hint" style="display:none;background:rgba(65,193,255,0.12);border:1px solid rgba(65,193,255,0.35);border-radius:10px;padding:10px 12px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.5;">아이디를 만들면 현재 덱과 골드가<br>자동으로 저장됩니다 💾</div>
+    <h2 style="text-align:center;margin-bottom:4px;">아이디 생성</h2>
+    <div id="signup-hint" style="display:none;background:rgba(65,193,255,0.12);border:1px solid rgba(65,193,255,0.35);border-radius:10px;padding:10px 12px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.5;">아이디를 만들면 현재 덱과 골드가<br>자동으로 저장됩니다</div>
     <input class="field" id="in-signup-id" placeholder="아이디" autocomplete="username">
     <input class="field" id="in-signup-pw1" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password">
     <input class="field" id="in-signup-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
@@ -1568,22 +2906,22 @@ document.body.insertAdjacentHTML('beforeend', `
 <div id="screen-home" class="screen hidden">
   <div style="position:absolute;top:0;left:0;right:0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:rgba(10,28,5,0.78);border-bottom:1px solid rgba(80,200,60,0.28);">
     <span id="home-username" style="font-size:14px;color:#a0ffb8;font-weight:700;">Guest</span>
-    <span id="home-gold" style="font-size:14px;color:#ffd060;font-weight:700;">💰 0</span>
+    <span id="home-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
   </div>
-  <div class="jui-title">🦁 Zoo Battle</div>
+  <div class="jui-title">Zoo Battle</div>
   <div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:248px;">
-    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">🎮 혼자서 플레이</button>
-    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">👥 둘이서 플레이</button>
-    <button class="btn full-btn" id="btn-home-deck">📋 덱 구성</button>
-    <button class="btn full-btn" id="btn-home-shop" disabled style="opacity:0.4;font-size:14px;">🛒 상점 (준비 중)</button>
-    <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">💾 진행상황 저장하기</button>
+    <button class="btn primary full-btn" id="btn-home-1p" style="font-size:17px;">혼자서 플레이</button>
+    <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">둘이서 플레이</button>
+    <button class="btn full-btn" id="btn-home-deck">덱 구성</button>
+    <button class="btn full-btn" id="btn-home-shop" style="font-size:14px;">상점</button>
+    <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">진행상황 저장하기</button>
   </div>
 </div>
 
 <!-- DECK -->
 <div id="screen-deck" class="screen hidden" style="padding:16px;justify-content:flex-start;padding-top:28px;">
   <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;width:100%;max-width:640px;">
-    <h2 style="margin:0;flex:1;">📋 덱 구성</h2>
+    <h2 style="margin:0;flex:1;">덱 구성</h2>
     <span id="deck-count" style="font-size:14px;color:#a0ffb8;white-space:nowrap;font-weight:700;">0 / 6 선택</span>
   </div>
   <div id="deck-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;overflow-y:auto;width:100%;max-width:640px;flex:1;align-content:start;padding-bottom:8px;"></div>
@@ -1592,22 +2930,35 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
 </div>
 
-<!-- SHOP (placeholder) -->
-<div id="screen-shop" class="screen hidden">
-  <div class="jui-panel" style="align-items:center;text-align:center;">
-    <h2 style="margin:0 0 10px;">🛒 상점</h2>
-    <p style="opacity:0.55;margin:0 0 18px;">준비 중입니다.</p>
-    <button class="btn" id="btn-shop-back">← 돌아가기</button>
+<!-- SHOP -->
+<div id="screen-shop" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;">
+  <div style="width:100%;max-width:700px;padding:20px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:20px;">
+    <div style="width:100%;display:flex;justify-content:space-between;align-items:center;">
+      <button class="btn" id="btn-shop-back" style="padding:10px 18px;font-size:14px;">← 돌아가기</button>
+      <h2 style="margin:0;">상점</h2>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span id="shop-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
+        <button id="btn-test-gold" style="font-size:11px;padding:4px 8px;border-radius:8px;border:1px solid rgba(255,220,0,0.4);background:rgba(255,220,0,0.12);color:#ffd060;cursor:pointer;">+100G 테스트</button>
+      </div>
+    </div>
+    <div id="shop-chest-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;width:100%;max-width:480px;"></div>
   </div>
+</div>
+
+<!-- CHEST OPENING OVERLAY -->
+<div id="chest-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.90);flex-direction:column;align-items:center;justify-content:center;gap:0;">
+  <img id="chest-anim-img" src="" alt="" style="width:260px;height:auto;transition:opacity 0.18s;">
+  <div id="chest-result-card" style="display:none;margin-top:18px;"></div>
+  <button id="btn-chest-close" class="btn primary" style="margin-top:20px;opacity:0;pointer-events:none;padding:12px 36px;">닫기</button>
 </div>
 
 <!-- 2P LOBBY -->
 <div id="screen-lobby2p" class="screen hidden">
   <div class="jui-panel" style="align-items:center;text-align:center;">
-    <h2 style="margin:0 0 14px;">👥 2인 대전 로비</h2>
+    <h2 style="margin:0 0 14px;">2인 대전 로비</h2>
     <input class="field" id="in-room" placeholder="방 코드 (예: BATTLE1)" style="margin-bottom:10px;text-align:center;">
     <div class="gap" style="margin-bottom:10px;justify-content:center;">
-      <button class="btn" id="btn-rndroom">🎲 랜덤 코드</button>
+      <button class="btn" id="btn-rndroom">랜덤 코드</button>
       <button class="btn primary" id="btn-joinroom">참가</button>
     </div>
     <div id="lobby-status" style="font-size:13px;opacity:0.8;min-height:20px;"></div>
@@ -1616,10 +2967,13 @@ document.body.insertAdjacentHTML('beforeend', `
 </div>
 
 <!-- RESULT -->
-<div id="screen-result" class="screen hidden">
-  <img id="result-header-img" src="" alt="" style="max-width:340px;width:88%;margin-bottom:14px;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.55));">
-  <div id="result-gold" style="font-size:16px;color:#ffd060;font-weight:700;margin-bottom:20px;min-height:22px;text-shadow:0 2px 6px rgba(0,0,0,0.6);"></div>
-  <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">🏠 홈으로</button>
+<div id="screen-result" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;">
+  <div style="width:100%;max-width:520px;padding:24px 16px 32px;display:flex;flex-direction:column;align-items:center;gap:14px;">
+    <img id="result-header-img" src="" alt="" style="max-width:300px;width:80%;filter:drop-shadow(0 4px 14px rgba(0,0,0,0.55));">
+    <div id="result-stats" style="width:100%;display:none;"></div>
+    <div id="result-words" style="width:100%;display:none;"></div>
+    <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">홈으로</button>
+  </div>
 </div>
 
 <!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
@@ -1696,6 +3050,53 @@ function showLoadingOverlay(show: boolean) {
 }
 
 // ─── Screen Manager ───────────────────────────────────────────────────────────
+// ─── BGM ─────────────────────────────────────────────────────────────────────
+const bgm = new Audio(`${import.meta.env.BASE_URL}bgm.mp3`);
+bgm.loop = true;
+bgm.volume = 0.4;
+
+// ─── Sound Effects (Web Audio API) ───────────────────────────────────────────
+let _actx: AudioContext | null = null;
+const actx = () => { if (!_actx) _actx = new AudioContext(); if (_actx.state === 'suspended') _actx.resume(); return _actx; };
+
+function sfx(type: 'click'|'spawn'|'attack'|'death'|'base_hit'|'food_launch'|'food_hit'|'victory'|'defeat'|'upgrade'|'card') {
+  try {
+    const ctx = actx(); const t = ctx.currentTime;
+    const osc = (freq: number, type_: OscillatorType, start: number, dur: number, vol: number, freqEnd?: number) => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = type_; o.frequency.setValueAtTime(freq, start);
+      if (freqEnd !== undefined) o.frequency.exponentialRampToValueAtTime(freqEnd, start + dur);
+      g.gain.setValueAtTime(vol, start); g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      o.start(start); o.stop(start + dur);
+    };
+    const noise = (start: number, dur: number, vol: number, lpFreq?: number, hpFreq?: number) => {
+      const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate);
+      const d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const s = ctx.createBufferSource(); const g = ctx.createGain(); s.buffer = buf;
+      let node: AudioNode = s;
+      if (lpFreq) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lpFreq; node.connect(f); node = f; }
+      if (hpFreq) { const f = ctx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hpFreq; node.connect(f); node = f; }
+      node.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(vol, start); g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      s.start(start); s.stop(start + dur);
+    };
+    switch (type) {
+      case 'click':       osc(900, 'sine', t, 0.07, 0.12); break;
+      case 'card':        osc(600, 'sine', t, 0.05, 0.10); osc(900, 'sine', t+0.05, 0.07, 0.08); break;
+      case 'spawn':       [0,0.07,0.13].forEach((dt,i) => osc(300*(1.5**i),'square',t+dt,0.07,0.07)); break;
+      case 'attack':      noise(t, 0.08, 0.22, 500); break;
+      case 'death':       osc(380, 'sawtooth', t, 0.4, 0.18, 70); noise(t, 0.15, 0.1, 200); break;
+      case 'base_hit':    osc(90, 'sine', t, 0.5, 0.45, 35); noise(t, 0.2, 0.3, 300); break;
+      case 'food_launch': noise(t, 0.22, 0.13, undefined, 400); osc(400,'sine',t,0.12,0.08,1200); break;
+      case 'food_hit':    noise(t, 0.28, 0.38, 900); osc(120,'sine',t,0.2,0.2,40); break;
+      case 'upgrade':     [0,0.1,0.2].forEach((dt,i) => osc([880,1108,1320][i],'sine',t+dt,0.28,0.14)); break;
+      case 'victory':     [0,0.18,0.36,0.54].forEach((dt,i) => osc([523,659,784,1047][i],'sine',t+dt,0.45,0.22)); break;
+      case 'defeat':      [0,0.22,0.44,0.66].forEach((dt,i) => osc([392,330,294,220][i],'sine',t+dt,0.5,0.18)); break;
+    }
+  } catch { /* ignore audio errors */ }
+}
+
 function showScreen(s: Screen) {
   currentScreen = s;
   const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result'];
@@ -1703,11 +3104,19 @@ function showScreen(s: Screen) {
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
+  if (s !== 'battle' && s !== 'initial') sfx('click');
+
+  // BGM: 배틀 중엔 정지, 그 외엔 재생
+  if (s === 'battle') {
+    bgm.pause();
+  } else {
+    bgm.play().catch(() => {}); // 브라우저 autoplay 정책 무시
+  }
 }
 
 function updateHomeDisplay() {
   ($('home-username') as HTMLElement).textContent = loggedInUsername || 'Guest';
-  ($('home-gold') as HTMLElement).textContent = `💰 ${playerGold}`;
+  ($('home-gold') as HTMLElement).textContent = `${playerGold} G`;
 }
 
 showScreen('initial');
@@ -1720,6 +3129,7 @@ let playerDeck: string[] = [...DEFAULT_DECK];
 function buildDeckCards() {
   const container = $('deck-cards');
   container.innerHTML = '';
+  // Animal cards
   for (const id of ANIMAL_IDS) {
     const d = ANIMALS[id];
     const card = document.createElement('div');
@@ -1735,7 +3145,27 @@ function buildDeckCards() {
         HP ${d.hp} / ATK ${d.atk}<br>
         SPD ${d.spd} / 비용 <b>${d.cost}</b>
       </div>`;
-    card.addEventListener('click', () => toggleDeckCard(id));
+    card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
+    container.appendChild(card);
+  }
+  // Food cards (magic items)
+  for (const id of FOOD_IDS) {
+    const f = FOODS[id];
+    const card = document.createElement('div');
+    card.dataset.id = id;
+    card.style.cssText = [
+      'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,200,80,0.30);',
+      `background:linear-gradient(180deg,rgba(60,30,5,0.55),rgba(20,10,2,0.55));text-align:center;font-size:12px;cursor:pointer;`,
+      'transition:border-color 0.12s,background 0.12s;user-select:none;position:relative;',
+    ].join('');
+    card.innerHTML = `
+      <div style="position:absolute;top:4px;right:6px;font-size:9px;color:#ffd060;font-weight:700;letter-spacing:0.5px;">FOOD</div>
+      <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.7);">${f.name}</div>
+      <div style="opacity:0.85;line-height:1.4;font-size:10px;color:#fff5dc;min-height:28px;">
+        ${f.desc}
+      </div>
+      <div style="margin-top:4px;font-size:11px;color:#ffd060;">비용 <b>${f.cost}</b></div>`;
+    card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
     container.appendChild(card);
   }
   refreshDeckCards();
@@ -1782,12 +3212,22 @@ function buildSummonButtons() {
   summonBtns.length = 0;
   const deck = playerDeck.length > 0 ? playerDeck : ANIMAL_IDS.slice(0, DECK_MAX);
   for (const id of deck) {
-    const d = ANIMALS[id];
+    const isFood = isFoodId(id);
+    const def: { name: string; cost: number } = isFood ? FOODS[id] : ANIMALS[id];
     const btn = document.createElement('button');
     btn.dataset.id = id;
-    btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
-    btn.innerHTML = `<span style="font-size:14px;color:#fff">${d.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${d.cost}</span>`;
-    btn.addEventListener('click', () => playerSummon(id));
+    btn.dataset.kind = isFood ? 'food' : 'animal';
+    if (isFood) {
+      btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,200,80,0.4);background:linear-gradient(180deg,rgba(80,40,5,0.50),rgba(40,20,2,0.50));color:#fff5dc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
+      btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.85;font-size:11px;color:#ffd060;">비용 ${def.cost}</span>`;
+    } else {
+      btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
+      btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${def.cost}</span>`;
+    }
+    btn.addEventListener('click', () => {
+      if (isFood) playerUseFood(id);
+      else playerSummon(id);
+    });
     grid.appendChild(btn);
     summonBtns.push(btn);
   }
@@ -1796,7 +3236,8 @@ function buildSummonButtons() {
 function updateSummonButtons() {
   for (const btn of summonBtns) {
     const id = btn.dataset.id!;
-    const canAfford = currency >= ANIMALS[id].cost;
+    const cost = isFoodId(id) ? FOODS[id].cost : ANIMALS[id].cost;
+    const canAfford = currency >= cost;
     btn.style.opacity = canAfford ? '1' : '0.4';
     btn.style.cursor = canAfford ? 'pointer' : 'not-allowed';
   }
@@ -1865,6 +3306,7 @@ function upgradeBase() {
   currency -= cost;
   if (gameMode === '1p') {
     p1TowerLevel++;
+    sfx('upgrade');
     const myBase = localSide === 'p1' ? p1Base : p2Base;
     myBase.maxHp += HP_PER_UPGRADE;
     myBase.hp = Math.min(myBase.maxHp, myBase.hp + HP_PER_UPGRADE);
@@ -1886,8 +3328,28 @@ function playerSummon(animalId: string) {
   if (gameMode === '1p') {
     const count = ANIMALS[animalId].groupSpawn ?? 1;
     for (let i = 0; i < count; i++) spawnUnit(animalId, localSide);
+    sfx('spawn');
   } else {
     socket.emit('battleSpawn', { animalId }); // single emit — server handles groupSpawn
+    sfx('spawn');
+  }
+}
+
+function playerUseFood(foodId: string) {
+  if (!battleActive) return;
+  const def = FOODS[foodId];
+  if (!def) return;
+  if (currency < def.cost) return;
+  // Broccoli is unique: only one barrier allowed at a time
+  if (def.effect === 'broccoli_barrier' && broccoliActive(localSide)) return;
+  currency -= def.cost;
+  updateHud();
+  if (gameMode === '1p') {
+    triggerFoodEffect(foodId, localSide);
+    sfx('food_launch');
+  } else {
+    socket.emit('battleSpawn', { animalId: foodId }); // network: reuse animal channel
+    sfx('food_launch');
   }
 }
 
@@ -1904,6 +3366,10 @@ $('btn-cammode').addEventListener('click', () => {
 function clearBattle() {
   for (const u of [...units]) removeUnitMeshes(u);
   units = [];
+  p1MonstersKilled = 0;
+  p1BossesKilled = 0;
+  p1DragonKilled = false;
+  correctWords = [];
   if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
   if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
   for (const m of baseTowerMeshes) scene.remove(m);
@@ -1917,6 +3383,7 @@ function clearBattle() {
   p1Team = 'red';
   p2Team = 'violet';
   clearSiegeWeapons();
+  clearFoodEffects();
 }
 
 async function startBattle() {
@@ -1964,6 +3431,7 @@ async function startBattle() {
     loadBossModels();
     loadMonsterModels();
   }
+  loadFoodModels();
 
   multiplayerTimeLeft = 120;
 
@@ -1978,12 +3446,15 @@ async function startBattle() {
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera(dt = 0) {
   if (camMode === 'top') {
-    // Bird's-eye: straight down over field center, own base at bottom of screen
-    camera.fov = 80;
+    // Bird's-eye: straight down over field center, field appears horizontal
+    // camera.up X-axis → Z-axis runs left-right on screen
+    // p1 base (z=SPAWN_P1, small) on right → up = (-1,0,0)
+    // p2 base (z=SPAWN_P2, large) on right → up = (+1,0,0)
+    camera.fov = 72;
     camera.updateProjectionMatrix();
-    camera.up.set(0, 0, localSide === 'p1' ? 1 : -1);
+    camera.up.set(localSide === 'p1' ? -1 : 1, 0, 0);
     const midZ = (SPAWN_P1 + SPAWN_P2) / 2;
-    camera.position.set(0, 36, midZ);
+    camera.position.set(0, 58, midZ);
     camera.lookAt(0, 0, midZ);
     return;
   }
@@ -2106,6 +3577,8 @@ function checkWinLose() {
 
 function endBattle(result: 'win' | 'lose' | 'draw') {
   battleActive = false;
+  if (result === 'win') sfx('victory');
+  else if (result === 'lose') sfx('defeat');
   const B = import.meta.env.BASE_URL;
   const isWin = result !== 'lose';
   const resScreen = $('screen-result');
@@ -2113,12 +3586,65 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
   resScreen.style.backgroundSize = 'cover';
   resScreen.style.backgroundPosition = 'center';
   ($('result-header-img') as HTMLImageElement).src = `${B}ui/PNG/${isWin ? 'you_win' : 'you_lose'}/header.png`;
-  let goldMsg = '';
-  if (result === 'win' && gameMode === '1p') {
-    playerGold += GOLD_PER_WIN;
-    goldMsg = `+${GOLD_PER_WIN} 💰 골드 획득!`;
+
+  // Gold breakdown (1P only)
+  const statsEl = $('result-stats') as HTMLElement;
+  const wordsEl = $('result-words') as HTMLElement;
+
+  if (gameMode === '1p') {
+    const GOLD_PER_MONSTER = 1;
+    const GOLD_PER_BOSS = 5;
+    const GOLD_DRAGON_BONUS = 10;
+    const GOLD_PER_ROUND = 2;
+    const GOLD_WIN_BONUS = 20;
+    const gMonster = p1MonstersKilled * GOLD_PER_MONSTER;
+    const gBoss = p1BossesKilled * GOLD_PER_BOSS;
+    const gDragon = p1DragonKilled ? GOLD_DRAGON_BONUS : 0;
+    const gRound = round * GOLD_PER_ROUND;
+    const gWin = result === 'win' ? GOLD_WIN_BONUS : 0;
+    const gTotal = gMonster + gBoss + gDragon + gRound + gWin;
+    playerGold += gTotal;
+
+    const row = (label: string, val: string) =>
+      `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
+        <span style="opacity:0.85;">${label}</span><span style="color:#ffd060;font-weight:700;">${val}</span>
+      </div>`;
+
+    statsEl.style.display = 'block';
+    statsEl.innerHTML = `
+      <div style="background:rgba(10,25,6,0.82);border:1px solid rgba(80,200,60,0.3);border-radius:14px;padding:14px 18px;font-size:14px;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:#a0ffb8;">골드 획득 내역</div>
+        ${row(`몬스터 처치 (${p1MonstersKilled}마리 × ${GOLD_PER_MONSTER}G)`, `${gMonster}G`)}
+        ${row(`보스 처치 (${p1BossesKilled}마리 × ${GOLD_PER_BOSS}G)`, `${gBoss}G`)}
+        ${p1DragonKilled ? row('드래곤 처치 보너스', `+${gDragon}G`) : ''}
+        ${row(`생존 라운드 (${round}라운드 × ${GOLD_PER_ROUND}G)`, `${gRound}G`)}
+        ${gWin > 0 ? row('클리어 보너스', `+${gWin}G`) : ''}
+        <div style="display:flex;justify-content:space-between;padding:8px 0 2px;font-size:16px;font-weight:900;">
+          <span>합계</span><span style="color:#ffd060;">+${gTotal}G</span>
+        </div>
+      </div>`;
+  } else {
+    statsEl.style.display = 'none';
   }
-  ($('result-gold') as HTMLElement).textContent = goldMsg;
+
+  // Correct words
+  if (correctWords.length > 0) {
+    wordsEl.style.display = 'block';
+    const rows = correctWords.map(w =>
+      `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.07);font-size:13px;">
+        <span style="color:#a8e6ff;font-weight:700;min-width:110px;">${w.en}</span>
+        <span style="opacity:0.8;">${w.ko}</span>
+      </div>`
+    ).join('');
+    wordsEl.innerHTML = `
+      <div style="background:rgba(10,25,6,0.82);border:1px solid rgba(80,200,60,0.3);border-radius:14px;padding:14px 18px;">
+        <div style="font-weight:700;font-size:15px;margin-bottom:8px;color:#a0ffb8;">맞춘 단어 (${correctWords.length}개)</div>
+        ${rows}
+      </div>`;
+  } else {
+    wordsEl.style.display = 'none';
+  }
+
   showScreen('result');
 }
 
@@ -2159,6 +3685,7 @@ function submitChoice(idx: number) {
   if (!battleActive) return;
   if (idx === correctIdx) {
     addCurrency(CURRENCY_MC);
+    correctWords.push({ en: currentWord.english, ko: currentWord.korean });
     pickNewWord();
   } else {
     addCurrency(-1);
@@ -2196,6 +3723,7 @@ function exitTypingMode() {
   const correct = currentWord.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
   if (correct) {
     addCurrency(CURRENCY_TYPE);
+    correctWords.push({ en: currentWord.english, ko: currentWord.korean });
     pickNewWord();
     (e.target as HTMLInputElement).value = '';
     (e.target as HTMLInputElement).focus();
@@ -2348,6 +3876,145 @@ socket.on('gameEnd', (payload: { result: 'p1win' | 'p2win' | 'draw' }) => {
   endBattle(iWin ? 'win' : 'lose');
 });
 
+// ─── Chest Shop ───────────────────────────────────────────────────────────────
+const CHEST_POOLS: Record<string, string[]> = {
+  D: ['bee','chick','crab','penguin', 'orange','tomato','egg'],
+  C: ['bee','chick','crab','penguin','bunny','eagle','fox','koala','mole',
+      'orange','tomato','egg','banana','carrot','mushroom','pepper_green','pepper_red','turnip'],
+  B: ['bunny','eagle','fox','koala','mole','cat','cow','deer','dog','monkey','panda','pig','giraffe','hog',
+      'banana','carrot','mushroom','pepper_green','pepper_red','turnip',
+      'avocado','coconut','pumpkin','broccoli','eggplant','lettuce'],
+  A: ['cat','deer','dog','monkey','pig','giraffe','hog','lion','polar','tiger','elephant',
+      'avocado','coconut','pumpkin','broccoli','eggplant','lettuce',
+      'apple','apple_green'],
+};
+
+function rollAnimal(grade: string): string {
+  const pool = CHEST_POOLS[grade] ?? CHEST_POOLS['D'];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function showResultCard(itemId: string, grade: string) {
+  const isFood = isFoodId(itemId);
+  const def = isFood ? FOODS[itemId] : ANIMALS[itemId];
+  if (!def) return;
+  const hex = `#${def.color.toString(16).padStart(6,'0')}`;
+  const gradeColor: Record<string,string> = { D:'#bbb', C:'#4af', B:'#b6f', A:'#fd0' };
+  const gc = gradeColor[grade] ?? '#fff';
+  const card = $('chest-result-card') as HTMLElement;
+  let stats = '';
+  if (isFood) {
+    const f = FOODS[itemId];
+    stats = `<div style="font-size:12px;color:#fff5dc;line-height:1.5;max-width:240px;">${f.desc}</div>
+             <div style="margin-top:8px;font-size:13px;color:#ffd060;">비용 ${f.cost}</div>`;
+  } else {
+    const a = ANIMALS[itemId];
+    stats = `<div style="display:flex;justify-content:center;gap:14px;font-size:13px;color:#a0ffb8;">
+        <span>HP ${a.hp}</span>
+        <span>ATK ${a.atk}</span>
+        <span>SPD ${a.spd}</span>
+      </div>`;
+  }
+  const tag = isFood ? `<div style="font-size:10px;color:#ffd060;letter-spacing:2px;margin-bottom:4px;">FOOD</div>` : '';
+  card.innerHTML = `
+    <div style="background:rgba(8,20,5,0.95);border:2px solid ${gc};border-radius:18px;padding:20px 28px;min-width:220px;text-align:center;box-shadow:0 0 30px ${gc}44;">
+      <div style="font-size:12px;font-weight:700;color:${gc};letter-spacing:2px;margin-bottom:10px;">${grade}등급</div>
+      ${tag}
+      <div style="width:56px;height:56px;border-radius:50%;background:${hex};margin:0 auto 12px;box-shadow:0 0 18px ${hex}99;"></div>
+      <div style="font-size:24px;font-weight:900;color:#fff;margin-bottom:12px;">${def.name}</div>
+      ${stats}
+    </div>`;
+  card.style.display = 'block';
+}
+
+const CHEST_GRADES = [
+  { grade: 'D', label: 'D등급', price: 3,  borderColor: 'rgba(160,160,160,0.5)', labelColor: '#bbb' },
+  { grade: 'C', label: 'C등급', price: 8,  borderColor: 'rgba(40,160,255,0.5)',  labelColor: '#4af' },
+  { grade: 'B', label: 'B등급', price: 15, borderColor: 'rgba(160,80,255,0.5)', labelColor: '#b6f' },
+  { grade: 'A', label: 'A등급', price: 30, borderColor: 'rgba(255,220,0,0.5)',  labelColor: '#fd0' },
+];
+
+function buildShopChests() {
+  const B = import.meta.env.BASE_URL;
+  const grid = $('shop-chest-grid');
+  grid.innerHTML = '';
+  ($('shop-gold') as HTMLElement).textContent = `${playerGold} G`;
+  for (const { grade, label, price, borderColor, labelColor } of CHEST_GRADES) {
+    const card = document.createElement('div');
+    card.className = 'chest-card';
+    card.style.borderColor = borderColor;
+    const canBuy = playerGold >= price;
+    card.innerHTML = `
+      <div style="font-size:16px;font-weight:900;color:${labelColor};">${label}</div>
+      <img src="${B}ui/chest/chest_closed_${grade}.png" alt="${label}" style="width:100%;max-width:190px;height:auto;">
+      <div style="font-size:14px;color:#ffd060;font-weight:700;">${price} G</div>
+      <button class="btn primary full-btn" data-grade="${grade}" data-price="${price}" style="font-size:14px;padding:10px;${canBuy ? '' : 'opacity:0.4;pointer-events:none;'}">열기</button>
+    `;
+    grid.appendChild(card);
+  }
+  grid.querySelectorAll('button[data-grade]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const grade = (btn as HTMLElement).dataset.grade!;
+      const price = parseInt((btn as HTMLElement).dataset.price!);
+      triggerChestOpen(grade, price);
+    });
+  });
+}
+
+function triggerChestOpen(grade: string, price: number) {
+  if (playerGold < price) return;
+  const B = import.meta.env.BASE_URL;
+  const overlay = $('chest-overlay');
+  const img = $('chest-anim-img') as HTMLImageElement;
+  const resultCard = $('chest-result-card') as HTMLElement;
+  const closeBtn = $('btn-chest-close') as HTMLButtonElement;
+
+  playerGold -= price;
+  const rolledAnimal = rollAnimal(grade);
+
+  img.src = `${B}ui/chest/chest_closed_${grade}.png`;
+  img.style.opacity = '1';
+  resultCard.style.display = 'none';
+  resultCard.innerHTML = '';
+  closeBtn.style.opacity = '0';
+  closeBtn.style.pointerEvents = 'none';
+  overlay.style.display = 'flex';
+
+  // 1. 흔들기
+  img.classList.add('chest-shaking');
+  setTimeout(() => {
+    img.classList.remove('chest-shaking');
+    img.style.opacity = '0';
+    // 2. 빛나는 열린 상자
+    setTimeout(() => {
+      img.src = `${B}ui/chest/chest_open_glow_${grade}.png`;
+      img.style.opacity = '1';
+      setTimeout(() => {
+        img.style.opacity = '0';
+        // 3. 열린 상자 + 결과 카드
+        setTimeout(() => {
+          img.src = `${B}ui/chest/chest_open_${grade}.png`;
+          img.style.opacity = '1';
+          showResultCard(rolledAnimal, grade);
+          closeBtn.style.opacity = '1';
+          closeBtn.style.pointerEvents = 'auto';
+        }, 200);
+      }, 700);
+    }, 200);
+  }, 600);
+}
+
+$('btn-chest-close').addEventListener('click', () => {
+  $('chest-overlay').style.display = 'none';
+  buildShopChests();
+  updateHomeDisplay();
+});
+
+$('btn-test-gold').addEventListener('click', () => {
+  playerGold += 100;
+  buildShopChests();
+});
+
 // ─── Button Handlers ──────────────────────────────────────────────────────────
 
 // Initial
@@ -2406,6 +4073,7 @@ $('btn-home-save').addEventListener('click', async () => {
 // Deck
 $('btn-deck-back').addEventListener('click', () => showScreen('home'));
 $('btn-shop-back').addEventListener('click', () => showScreen('home'));
+$('btn-home-shop').addEventListener('click', () => { buildShopChests(); showScreen('shop'); });
 
 // Lobby
 $('btn-lobby-back').addEventListener('click', () => {
@@ -2456,6 +4124,12 @@ function animate() {
     for (const u of units) u.mixer?.update(dt);
     if (gameMode === '1p') stepSiegeWeapons(dt);
     stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
+    if (gameMode === '1p') {
+      stepFoodProjectiles(dt);
+      stepFoodZones(dt);
+      stepFoodBuffs(dt);
+      stepCoconutShockwaves(dt);
+    }
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
       syncBaseMeshes();
