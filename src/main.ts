@@ -3096,6 +3096,10 @@ const bgm = new Audio(`${import.meta.env.BASE_URL}bgm.mp3`);
 bgm.loop = true;
 bgm.volume = 0.4;
 
+const battleBgm = new Audio(`${import.meta.env.BASE_URL}battle-bgm.mp3`);
+battleBgm.loop = true;
+battleBgm.volume = 0.45;
+
 // ─── Sound Effects (Web Audio API) ───────────────────────────────────────────
 let _actx: AudioContext | null = null;
 const actx = () => { if (!_actx) _actx = new AudioContext(); if (_actx.state === 'suspended') _actx.resume(); return _actx; };
@@ -3147,10 +3151,14 @@ function showScreen(s: Screen) {
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
   if (s !== 'battle' && s !== 'initial') sfx('click');
 
-  // BGM: 배틀 중엔 정지, 그 외엔 재생
+  // BGM: 홈/로비엔 bgm, 전투 중엔 battleBgm
   if (s === 'battle') {
     bgm.pause();
+    battleBgm.currentTime = 0;
+    battleBgm.play().catch(() => {});
   } else {
+    battleBgm.pause();
+    battleBgm.currentTime = 0;
     bgm.play().catch(() => {}); // 브라우저 autoplay 정책 무시
   }
 
