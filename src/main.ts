@@ -3037,6 +3037,12 @@ document.body.insertAdjacentHTML('beforeend', `
       </div>
     </div>
   </div>
+  <!-- Currency slot bar -->
+  <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+    <span style="font-size:12px;color:#ffd700;min-width:16px;">💰</span>
+    <div id="currency-slots" style="display:flex;gap:3px;flex:1;"></div>
+    <span id="currency-count" style="font-size:11px;color:#ffd700;min-width:32px;text-align:right;font-variant-numeric:tabular-nums;">0/15</span>
+  </div>
 </div>
 
 <!-- BATTLE PANEL (bottom 50%) -->
@@ -3542,9 +3548,30 @@ function fmtTime(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// ─── Currency Slots Init ──────────────────────────────────────────────────────
+const currencySlotEls: HTMLElement[] = [];
+(function initCurrencySlots() {
+  const container = $('currency-slots');
+  for (let i = 0; i < CURRENCY_MAX; i++) {
+    const slot = document.createElement('div');
+    slot.style.cssText = 'flex:1;height:10px;border-radius:3px;background:#1a1a2e;border:1px solid rgba(255,215,0,0.2);transition:background 0.08s,transform 0.08s;';
+    container.appendChild(slot);
+    currencySlotEls.push(slot);
+  }
+})();
+
 // ─── HUD ──────────────────────────────────────────────────────────────────────
 function updateHud() {
   $('hud-currency').textContent = `재화: ${currency} / ${CURRENCY_MAX}`;
+  // Currency slot bar
+  for (let i = 0; i < CURRENCY_MAX; i++) {
+    const filled = i < currency;
+    currencySlotEls[i].style.background = filled ? 'linear-gradient(180deg,#ffe066,#f5a800)' : '#1a1a2e';
+    currencySlotEls[i].style.borderColor = filled ? 'rgba(255,215,0,0.7)' : 'rgba(255,215,0,0.2)';
+    currencySlotEls[i].style.transform = filled ? 'scaleY(1.15)' : 'scaleY(1)';
+    currencySlotEls[i].style.boxShadow = filled ? '0 0 4px rgba(255,200,0,0.5)' : 'none';
+  }
+  $('currency-count').textContent = `${currency}/${CURRENCY_MAX}`;
   updateSummonButtons();
   updateUpgradeButton();
   updateSiegeButtons();
