@@ -6,6 +6,11 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || '';
 const ALLOWED_ORIGINS = CLIENT_ORIGIN.split(',').map(o => o.trim()).filter(Boolean);
 
 const httpServer = createServer((req, res) => {
+  // CORS for browser fetch (health-check ping from any origin)
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, battles: battleRooms.size }));
