@@ -2801,6 +2801,16 @@ let battleClock = 0; // elapsed seconds since battle start (for paralysis timing
 let currency = 0;
 let autoCurrencyTimer = 0;
 let round = 1;
+
+// Quiz event
+let quizEventActive = false;
+let quizEventPhase: 'study' | 'quiz' | 'result' = 'study';
+let quizEventPhaseTimer = 0;
+let quizEventWords: typeof wordList = [];
+let quizEventQuestion: typeof wordList[0] | null = null;
+let quizEventChoices: string[] = [];
+let quizEventAnswered = false;
+let quizEventTriggerTimer = 60; // seconds until next quiz event
 let roundTimer = 0;
 let aiSpawnTimer = 0;
 
@@ -2979,6 +2989,25 @@ document.body.insertAdjacentHTML('beforeend', `
     <div id="result-stats" style="width:100%;display:none;"></div>
     <div id="result-words" style="width:100%;display:none;"></div>
     <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">홈으로</button>
+  </div>
+</div>
+
+<!-- QUIZ EVENT OVERLAY -->
+<div id="quiz-event-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:rgba(16,20,48,0.98);border:2px solid rgba(255,215,0,0.4);border-radius:20px;padding:32px 36px;max-width:500px;width:92%;text-align:center;color:#fff;box-shadow:0 0 40px rgba(0,0,0,0.8);">
+    <div id="qe-title" style="font-size:18px;font-weight:bold;color:#ffd700;margin-bottom:18px;"></div>
+    <div id="qe-study" style="display:none;">
+      <div id="qe-word-list" style="text-align:left;"></div>
+    </div>
+    <div id="qe-quiz" style="display:none;">
+      <div style="font-size:14px;color:#aaa;margin-bottom:8px;">다음 단어의 뜻은?</div>
+      <div id="qe-question" style="font-size:30px;font-weight:bold;color:#7ad7f0;margin-bottom:20px;letter-spacing:2px;"></div>
+      <div id="qe-choices" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+    <div id="qe-result" style="display:none;font-size:22px;font-weight:bold;min-height:60px;display:flex;align-items:center;justify-content:center;"></div>
+    <div style="margin-top:18px;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;">
+      <div id="qe-timer-fill" style="height:100%;background:#ffd700;border-radius:3px;width:100%;transition:width 0.1s linear;"></div>
+    </div>
   </div>
 </div>
 
@@ -3423,6 +3452,9 @@ async function startBattle() {
   battleClock = 0;
   currency = 0;
   autoCurrencyTimer = 0;
+  quizEventTriggerTimer = 60;
+  quizEventActive = false;
+  $('quiz-event-overlay').style.display = 'none';
   camPan = 0;
   camMode = 'side';
   ($('btn-cammode') as HTMLButtonElement).textContent = '👁 시점';
@@ -3769,6 +3801,82 @@ function addCurrency(amt: number) {
   if (gameMode === '2p' && amt > 0 && battleActive) {
     socket.emit('currencyEarn', { amount: amt });
   }
+}
+
+// ─── Quiz Event (every 60s) ───────────────────────────────────────────────────
+function startQuizEvent() {
+  quizEventActive = true;
+  quizEventAnswered = false;
+  // Pick 5 random words
+  const shuffled = [...wordList].sort(() => Math.random() - 0.5);
+  quizEventWords = shuffled.slice(0, 5);
+  quizEventPhase = 'study';
+  quizEventPhaseTimer = 5;
+
+  const overlay = $('quiz-event-overlay');
+  overlay.style.display = 'flex';
+  $('qe-study').style.display = 'block';
+  $('qe-quiz').style.display = 'none';
+  ($('qe-result') as HTMLElement).style.display = 'none';
+  $('qe-title').textContent = '📚 단어 암기! (5초)';
+  $('qe-word-list').innerHTML = quizEventWords.map(w =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.08);gap:12px;">
+      <span style="color:#7ad7f0;font-weight:700;font-size:16px;">${w.english}</span>
+      <span style="color:#ffe0a0;font-size:14px;">${w.korean.split(',')[0].trim()}</span>
+    </div>`
+  ).join('');
+  $('qe-timer-fill').style.width = '100%';
+}
+
+function advanceQuizEventToQuiz() {
+  quizEventPhase = 'quiz';
+  quizEventPhaseTimer = 5;
+  // Pick 1 of the 5 as the question
+  quizEventQuestion = quizEventWords[Math.floor(Math.random() * 5)];
+  // Choices: short Korean meanings of all 5 words, shuffled
+  quizEventChoices = quizEventWords.map(w => w.korean.split(',')[0].trim());
+  for (let i = quizEventChoices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [quizEventChoices[i], quizEventChoices[j]] = [quizEventChoices[j], quizEventChoices[i]];
+  }
+  $('qe-study').style.display = 'none';
+  $('qe-quiz').style.display = 'block';
+  $('qe-title').textContent = '❓ 문제를 맞춰라!';
+  $('qe-question').textContent = quizEventQuestion.english;
+  const cont = $('qe-choices');
+  cont.innerHTML = '';
+  quizEventChoices.forEach((choice, i) => {
+    const btn = document.createElement('button');
+    btn.textContent = `${i + 1}. ${choice}`;
+    btn.style.cssText = 'padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-size:14px;cursor:pointer;text-align:left;transition:background 0.15s;';
+    btn.addEventListener('mouseover', () => { btn.style.background = 'rgba(255,255,255,0.15)'; });
+    btn.addEventListener('mouseout', () => { btn.style.background = 'rgba(255,255,255,0.07)'; });
+    btn.addEventListener('click', () => submitQuizEventChoice(i));
+    cont.appendChild(btn);
+  });
+  $('qe-timer-fill').style.width = '100%';
+}
+
+function submitQuizEventChoice(idx: number) {
+  if (quizEventAnswered) return;
+  quizEventAnswered = true;
+  const correctMeaning = quizEventQuestion!.korean.split(',')[0].trim();
+  const correct = quizEventChoices[idx] === correctMeaning;
+  $('qe-quiz').style.display = 'none';
+  const res = $('qe-result') as HTMLElement;
+  res.style.display = 'flex';
+  if (correct) {
+    res.innerHTML = '🎉 정답!<br><span style="font-size:16px;color:#a0ffb8;">+15 재화 지급!</span>';
+    addCurrency(15);
+  } else {
+    res.innerHTML = `❌ 오답!<br><span style="font-size:14px;color:#ffb0b0;">정답: ${correctMeaning}</span>`;
+  }
+  setTimeout(() => endQuizEvent(), 2000);
+}
+
+function endQuizEvent() {
+  quizEventActive = false;
+  $('quiz-event-overlay').style.display = 'none';
 }
 
 // Keyboard shortcuts for quiz
@@ -4154,13 +4262,20 @@ function animate() {
     autoCurrencyTimer += dt;
     if (autoCurrencyTimer >= CURRENCY_AUTO_INTERVAL) {
       autoCurrencyTimer -= CURRENCY_AUTO_INTERVAL;
-      addCurrency(1);
+      if (gameMode === '1p') addCurrency(1); // 2P: server handles auto-currency
     }
 
-    if (gameMode === '1p') stepUnits(dt);
+    // Quiz event timer
+    quizEventTriggerTimer -= dt;
+    if (quizEventTriggerTimer <= 0) {
+      quizEventTriggerTimer = 60;
+      startQuizEvent();
+    }
+
+    if (gameMode === '1p' && !quizEventActive) stepUnits(dt);
     syncUnitMeshes();
     for (const u of units) u.mixer?.update(dt);
-    if (gameMode === '1p') stepSiegeWeapons(dt);
+    if (gameMode === '1p' && !quizEventActive) stepSiegeWeapons(dt);
     stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
     if (gameMode === '1p') {
       stepFoodProjectiles(dt);
@@ -4187,6 +4302,20 @@ function animate() {
     }
 
     updateHud();
+  }
+
+  if (quizEventActive) {
+    quizEventPhaseTimer -= dt;
+    const phaseDur = 5;
+    $('qe-timer-fill').style.width = Math.max(0, quizEventPhaseTimer / phaseDur * 100) + '%';
+    if (quizEventPhaseTimer <= 0 && !quizEventAnswered) {
+      if (quizEventPhase === 'study') {
+        advanceQuizEventToQuiz();
+      } else {
+        // Time ran out on quiz
+        endQuizEvent();
+      }
+    }
   }
 
   // HP sprites always face camera
