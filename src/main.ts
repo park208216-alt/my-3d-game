@@ -7,8 +7,8 @@ import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
 import { FOODS, FOOD_IDS, isFoodId } from './foods';
-import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK } from './supabase';
-import type { UserProfile } from './supabase';
+import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, submitLeaderboard, fetchLeaderboard } from './supabase';
+import type { UserProfile, LeaderboardEntry } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
 const MODEL_MAP: Record<string, string> = {
@@ -2059,11 +2059,14 @@ const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type GameMode = '1p' | '2p';
-type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'lobby2p' | 'battle' | 'result';
+type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'lobby2p' | 'battle' | 'result' | 'leaderboard';
 let loggedInUsername = '';
 let loggedInUserId = '';
 let playerGold = 0;
+let guestNickname = localStorage.getItem('zoo_nickname') || '';
 let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
+let lbTab: 'words' | 'clear' = 'words';
+let lbRefreshInterval: ReturnType<typeof setInterval> | null = null;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
 
@@ -2878,7 +2881,13 @@ document.body.insertAdjacentHTML('beforeend', `
 <div id="screen-initial" class="screen">
   <div class="jui-title">Zoo Battle</div>
   <div style="display:flex;flex-direction:column;align-items:center;gap:14px;width:248px;">
+    <div style="width:100%;">
+      <div style="font-size:13px;color:#aac;margin-bottom:6px;text-align:left;">닉네임</div>
+      <input class="field" id="in-nickname" placeholder="닉네임 입력 (최대 12자)" maxlength="12" autocomplete="off" style="text-align:center;font-size:16px;">
+      <div id="nickname-error" style="color:#ff9090;font-size:12px;min-height:16px;text-align:center;margin-top:4px;"></div>
+    </div>
     <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">시작하기</button>
+    <button class="btn full-btn" id="btn-leaderboard" style="font-size:14px;padding:11px;">🏆 랭킹 보기</button>
     <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">로그인 (진행상황 불러오기)</button>
   </div>
 </div>
@@ -2989,6 +2998,24 @@ document.body.insertAdjacentHTML('beforeend', `
     <div id="result-stats" style="width:100%;display:none;"></div>
     <div id="result-words" style="width:100%;display:none;"></div>
     <button class="btn primary" id="btn-result-menu" style="font-size:17px;padding:14px 44px;">홈으로</button>
+  </div>
+</div>
+
+<!-- LEADERBOARD -->
+<div id="screen-leaderboard" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;">
+  <div style="width:100%;max-width:480px;padding:16px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <button class="btn" id="btn-lb-back" style="padding:8px 14px;font-size:13px;">← 돌아가기</button>
+      <div style="font-size:20px;font-weight:900;color:#ffd700;">🏆 랭킹</div>
+      <button class="btn" id="btn-lb-refresh" style="padding:8px 14px;font-size:13px;margin-left:auto;">🔄 새로고침</button>
+    </div>
+    <!-- Tab buttons -->
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button id="lb-tab-words" class="btn primary" style="flex:1;padding:10px;font-size:14px;">📚 단어 랭킹</button>
+      <button id="lb-tab-clear" class="btn" style="flex:1;padding:10px;font-size:14px;">⚔️ 클리어 랭킹</button>
+    </div>
+    <div id="lb-status" style="font-size:12px;color:#aaa;text-align:right;margin-bottom:8px;"></div>
+    <div id="lb-list" style="display:flex;flex-direction:column;gap:4px;"></div>
   </div>
 </div>
 
@@ -3144,7 +3171,7 @@ function sfx(type: 'click'|'spawn'|'attack'|'death'|'base_hit'|'food_launch'|'fo
 
 function showScreen(s: Screen) {
   currentScreen = s;
-  const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result'];
+  const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result','leaderboard'];
   for (const id of screens) $(`screen-${id}`).classList.toggle('hidden', s !== id);
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
@@ -3187,6 +3214,10 @@ function updateHomeDisplay() {
 
 showScreen('initial');
 renderer.domElement.style.display = 'none';
+
+// Pre-fill nickname from localStorage
+const savedNick = localStorage.getItem('zoo_nickname') || '';
+if (savedNick) ($('in-nickname') as HTMLInputElement).value = savedNick;
 
 // ─── Deck Screen ──────────────────────────────────────────────────────────────
 const DECK_MAX = 6;
@@ -3571,6 +3602,40 @@ function fmtTime(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+// ─── Leaderboard ─────────────────────────────────────────────────────────────
+function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') {
+  const list = $('lb-list');
+  if (!entries.length) { list.innerHTML = '<div style="text-align:center;color:#aaa;padding:20px;">아직 기록이 없어요</div>'; return; }
+  const myNick = loggedInUsername || guestNickname;
+  list.innerHTML = entries.map((e, i) => {
+    const isMe = e.nickname === myNick;
+    const rank = i + 1;
+    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+    const val = tab === 'words'
+      ? `📚 ${e.word_count}개`
+      : `⚔️ ${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:${isMe ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isMe ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.07)'};">
+      <span style="min-width:30px;font-size:16px;">${medal}</span>
+      <span style="flex:1;font-weight:${isMe ? '700' : '400'};color:${isMe ? '#ffd700' : '#e8eefc'};">${e.nickname}</span>
+      <span style="color:#a0ffb8;font-size:13px;">${val}</span>
+    </div>`;
+  }).join('');
+}
+
+async function loadLeaderboard(tab: 'words' | 'clear') {
+  lbTab = tab;
+  // Update tab button styles
+  ($('lb-tab-words') as HTMLButtonElement).className = `btn ${tab === 'words' ? 'primary' : ''}`;
+  ($('lb-tab-words') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
+  ($('lb-tab-clear') as HTMLButtonElement).className = `btn ${tab === 'clear' ? 'primary' : ''}`;
+  ($('lb-tab-clear') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
+  $('lb-status').textContent = '불러오는 중...';
+  const sortBy = tab === 'words' ? 'word_count' : 'clear_count';
+  const entries = await fetchLeaderboard(sortBy);
+  renderLeaderboard(entries, tab);
+  $('lb-status').textContent = `최근 갱신: ${new Date().toLocaleTimeString('ko-KR')} · 상위 100명`;
+}
+
 // ─── Currency Slots Init ──────────────────────────────────────────────────────
 const currencySlotEls: HTMLElement[] = [];
 (function initCurrencySlots() {
@@ -3709,6 +3774,12 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
     const gWin = result === 'win' ? GOLD_WIN_BONUS : 0;
     const gTotal = gMonster + gBoss + gDragon + gRound + gWin;
     playerGold += gTotal;
+
+    // Submit leaderboard
+    const nick = loggedInUsername || guestNickname;
+    if (nick) {
+      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null);
+    }
 
     const row = (label: string, val: string) =>
       `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
@@ -4209,13 +4280,30 @@ $('btn-test-gold').addEventListener('click', () => {
 
 // Initial
 $('btn-start').addEventListener('click', () => {
-  loggedInUsername = '';
-  loggedInUserId = '';
+  const nick = ($('in-nickname') as HTMLInputElement).value.trim().slice(0, 12);
+  if (!nick) { $('nickname-error').textContent = '닉네임을 입력해주세요'; return; }
+  $('nickname-error').textContent = '';
+  localStorage.setItem('zoo_nickname', nick);
+  loggedInUsername = loggedInUsername || nick; // keep logged-in username if exists
+  guestNickname = nick;
   playerGold = 0;
   updateHomeDisplay();
   showScreen('home');
 });
 $('btn-load-progress').addEventListener('click', () => showScreen('login'));
+$('btn-leaderboard').addEventListener('click', () => {
+  showScreen('leaderboard');
+  loadLeaderboard('words');
+  if (lbRefreshInterval) clearInterval(lbRefreshInterval);
+  lbRefreshInterval = setInterval(() => { if (currentScreen === 'leaderboard') loadLeaderboard(lbTab); }, 60000);
+});
+$('btn-lb-back').addEventListener('click', () => {
+  if (lbRefreshInterval) { clearInterval(lbRefreshInterval); lbRefreshInterval = null; }
+  showScreen('initial');
+});
+$('btn-lb-refresh').addEventListener('click', () => loadLeaderboard(lbTab));
+$('lb-tab-words').addEventListener('click', () => loadLeaderboard('words'));
+$('lb-tab-clear').addEventListener('click', () => loadLeaderboard('clear'));
 
 // Home
 $('btn-home-1p').addEventListener('click', () => {
