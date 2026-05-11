@@ -3532,21 +3532,36 @@ function updateCamera(dt = 0) {
   if (camera.fov !== 60) { camera.fov = 60; camera.updateProjectionMatrix(); }
   if (camera.up.y !== 1) camera.up.set(0, 1, 0);
 
+  // Portrait mode: wider FOV so more of the field fits on screen
+  const isPortrait = window.innerHeight > window.innerWidth;
+  const targetFov = isPortrait ? 80 : 60;
+  if (camera.fov !== targetFov) { camera.fov = targetFov; camera.updateProjectionMatrix(); }
+
+  // Pan limits: generous forward (enemy side) range, tighter backward range
+  // P1 moves +Z toward enemy; P2 moves -Z toward enemy
+  const panFwd  = isPortrait ? 30 : 26;  // toward enemy (more room needed on portrait)
+  const panBack = isPortrait ? 12 : 10;  // toward own base
+  const panMin = localSide === 'p1' ? -panBack : -panFwd;
+  const panMax = localSide === 'p1' ?  panFwd  :  panBack;
+
   // Inertia: continue sliding after release, decay with friction
   if (!camPanActive && Math.abs(camPanVel) > 0.01) {
-    camPan = Math.max(-15, Math.min(15, camPan + camPanVel * dt));
+    camPan = Math.max(panMin, Math.min(panMax, camPan + camPanVel * dt));
     camPanVel *= Math.max(0, 1 - 9 * dt);
   } else if (!camPanActive) {
     camPanVel = 0;
   }
+  camPan = Math.max(panMin, Math.min(panMax, camPan));
 
   const baseZ = localSide === 'p1' ? FIELD_LEN * 0.33 : FIELD_LEN * 0.67;
   const lookZ = baseZ + camPan;
+  // Raise camera slightly on portrait so units don't fill the screen
+  const camH = isPortrait ? 7 : 5;
   if (localSide === 'p1') {
-    camera.position.set(8, 5, lookZ);
+    camera.position.set(8, camH, lookZ);
     camera.lookAt(0, 2, lookZ);
   } else {
-    camera.position.set(-8, 5, lookZ);
+    camera.position.set(-8, camH, lookZ);
     camera.lookAt(0, 2, lookZ);
   }
 }
