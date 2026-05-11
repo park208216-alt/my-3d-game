@@ -78,7 +78,7 @@ export async function submitLeaderboard(
     .from('leaderboard')
     .select('*')
     .eq('nickname', nickname)
-    .single();
+    .maybeSingle();
 
   const prev = existing as (LeaderboardEntry & { device_token?: string }) | null;
 
