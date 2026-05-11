@@ -45,3 +45,55 @@ export async function ensureProfile(userId: string): Promise<UserProfile> {
   await supabase.from('profiles').insert({ id: userId, ...fresh });
   return fresh;
 }
+
+export interface LeaderboardEntry {
+  nickname: string;
+  word_count: number;
+  clear_count: number;
+  best_time: number | null;
+  updated_at: string;
+}
+
+export async function submitLeaderboard(
+  nickname: string,
+  wordCount: number,
+  isWin: boolean,
+  clearTimeSec: number | null
+): Promise<void> {
+  // Fetch existing record
+  const { data: existing } = await supabase
+    .from('leaderboard')
+    .select('*')
+    .eq('nickname', nickname)
+    .single();
+
+  const prev = existing as LeaderboardEntry | null;
+  const newWordCount = Math.max(wordCount, prev?.word_count ?? 0);
+  const newClearCount = (prev?.clear_count ?? 0) + (isWin ? 1 : 0);
+  const newBestTime = isWin && clearTimeSec !== null
+    ? (prev?.best_time ? Math.min(prev.best_time, clearTimeSec) : clearTimeSec)
+    : (prev?.best_time ?? null);
+
+  await supabase.from('leaderboard').upsert({
+    nickname,
+    word_count: newWordCount,
+    clear_count: newClearCount,
+    best_time: newBestTime,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+export async function fetchLeaderboard(
+  sortBy: 'word_count' | 'clear_count'
+): Promise<LeaderboardEntry[]> {
+  const { data, error } = await supabase
+    .from('leaderboard')
+    .select('*')
+    .order(sortBy, { ascending: false })
+    .limit(100);
+  if (error) {
+    console.warn('[Leaderboard] fetch failed — make sure the "leaderboard" table exists in Supabase:', error.message);
+    return [];
+  }
+  return (data ?? []) as LeaderboardEntry[];
+}
