@@ -46,6 +46,17 @@ export async function ensureProfile(userId: string): Promise<UserProfile> {
   return fresh;
 }
 
+// Persistent device token — used to prevent nickname hijacking
+function getDeviceToken(): string {
+  const key = 'zoo_device_token';
+  let token = localStorage.getItem(key);
+  if (!token) {
+    token = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem(key, token);
+  }
+  return token;
+}
+
 export interface LeaderboardEntry {
   nickname: string;
   word_count: number;
@@ -60,6 +71,8 @@ export async function submitLeaderboard(
   isWin: boolean,
   clearTimeSec: number | null
 ): Promise<void> {
+  const deviceToken = getDeviceToken();
+
   // Fetch existing record
   const { data: existing } = await supabase
     .from('leaderboard')
@@ -67,7 +80,14 @@ export async function submitLeaderboard(
     .eq('nickname', nickname)
     .single();
 
-  const prev = existing as LeaderboardEntry | null;
+  const prev = existing as (LeaderboardEntry & { device_token?: string }) | null;
+
+  // Block if a different device already owns this nickname
+  if (prev?.device_token && prev.device_token !== deviceToken) {
+    console.warn('[Leaderboard] 닉네임이 이미 다른 기기에서 사용 중입니다:', nickname);
+    return;
+  }
+
   const newWordCount = Math.max(wordCount, prev?.word_count ?? 0);
   const newClearCount = (prev?.clear_count ?? 0) + (isWin ? 1 : 0);
   const newBestTime = isWin && clearTimeSec !== null
@@ -76,6 +96,7 @@ export async function submitLeaderboard(
 
   await supabase.from('leaderboard').upsert({
     nickname,
+    device_token: deviceToken,
     word_count: newWordCount,
     clear_count: newClearCount,
     best_time: newBestTime,

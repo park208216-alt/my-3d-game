@@ -2887,7 +2887,6 @@ document.body.insertAdjacentHTML('beforeend', `
       <div id="nickname-error" style="color:#ff9090;font-size:12px;min-height:16px;text-align:center;margin-top:4px;"></div>
     </div>
     <button class="btn primary full-btn" id="btn-start" style="font-size:20px;padding:16px 28px;">시작하기</button>
-    <button class="btn full-btn" id="btn-leaderboard" style="font-size:14px;padding:11px;">🏆 랭킹 보기</button>
     <button class="btn full-btn" id="btn-load-progress" style="font-size:14px;padding:11px;opacity:0.88;">로그인 (진행상황 불러오기)</button>
   </div>
 </div>
@@ -2939,6 +2938,7 @@ document.body.insertAdjacentHTML('beforeend', `
     <button class="btn primary full-btn" id="btn-home-2p" style="font-size:17px;">둘이서 플레이</button>
     <button class="btn full-btn" id="btn-home-deck">덱 구성</button>
     <button class="btn full-btn" id="btn-home-shop" style="font-size:14px;">상점</button>
+    <button class="btn full-btn" id="btn-home-leaderboard" style="font-size:14px;">랭킹 보기</button>
     <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">진행상황 저장하기</button>
   </div>
 </div>
@@ -3006,13 +3006,13 @@ document.body.insertAdjacentHTML('beforeend', `
   <div style="width:100%;max-width:480px;padding:16px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <button class="btn" id="btn-lb-back" style="padding:8px 14px;font-size:13px;">← 돌아가기</button>
-      <div style="font-size:20px;font-weight:900;color:#ffd700;">🏆 랭킹</div>
-      <button class="btn" id="btn-lb-refresh" style="padding:8px 14px;font-size:13px;margin-left:auto;">🔄 새로고침</button>
+      <div style="font-size:20px;font-weight:900;color:#ffd700;">랭킹</div>
+      <button class="btn" id="btn-lb-refresh" style="padding:8px 14px;font-size:13px;margin-left:auto;">새로고침</button>
     </div>
     <!-- Tab buttons -->
     <div style="display:flex;gap:8px;margin-bottom:14px;">
-      <button id="lb-tab-words" class="btn primary" style="flex:1;padding:10px;font-size:14px;">📚 단어 랭킹</button>
-      <button id="lb-tab-clear" class="btn" style="flex:1;padding:10px;font-size:14px;">⚔️ 클리어 랭킹</button>
+      <button id="lb-tab-words" class="btn primary" style="flex:1;padding:10px;font-size:14px;">단어 랭킹</button>
+      <button id="lb-tab-clear" class="btn" style="flex:1;padding:10px;font-size:14px;">클리어 랭킹</button>
     </div>
     <div id="lb-status" style="font-size:12px;color:#aaa;text-align:right;margin-bottom:8px;"></div>
     <div id="lb-list" style="display:flex;flex-direction:column;gap:4px;"></div>
@@ -3202,8 +3202,8 @@ function showScreen(s: Screen) {
     }, 800);
     fetch(pingUrl, { signal: ctrl.signal })
       .then(r => r.json())
-      .then(() => { clearTimeout(timer); clearInterval(dotInterval); $('lobby-status').textContent = '✅ 서버 준비 완료! 방 코드를 입력하세요'; })
-      .catch(() => { clearTimeout(timer); clearInterval(dotInterval); $('lobby-status').textContent = '⚠️ 서버 응답 없음 — 그래도 입장 시도해보세요'; });
+      .then(() => { clearTimeout(timer); clearInterval(dotInterval); $('lobby-status').textContent = '서버 준비 완료! 방 코드를 입력하세요'; })
+      .catch(() => { clearTimeout(timer); clearInterval(dotInterval); $('lobby-status').textContent = '서버 응답 없음 — 그래도 입장 시도해보세요'; });
   }
 }
 
@@ -3610,12 +3610,13 @@ function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') 
   list.innerHTML = entries.map((e, i) => {
     const isMe = e.nickname === myNick;
     const rank = i + 1;
-    const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+    const rankLabel = rank <= 3 ? ['1위', '2위', '3위'][rank - 1] : `${rank}위`;
     const val = tab === 'words'
-      ? `📚 ${e.word_count}개`
-      : `⚔️ ${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}`;
+      ? `${e.word_count}개`
+      : `${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}`;
+    const rankColor = rank === 1 ? '#ffd700' : rank === 2 ? '#c0c0c0' : rank === 3 ? '#cd7f32' : '#aaa';
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:${isMe ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isMe ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.07)'};">
-      <span style="min-width:30px;font-size:16px;">${medal}</span>
+      <span style="min-width:34px;font-size:13px;font-weight:700;color:${rankColor};">${rankLabel}</span>
       <span style="flex:1;font-weight:${isMe ? '700' : '400'};color:${isMe ? '#ffd700' : '#e8eefc'};">${e.nickname}</span>
       <span style="color:#a0ffb8;font-size:13px;">${val}</span>
     </div>`;
@@ -3939,7 +3940,7 @@ function startQuizEvent() {
   $('qe-study').style.display = 'block';
   $('qe-quiz').style.display = 'none';
   ($('qe-result') as HTMLElement).style.display = 'none';
-  $('qe-title').textContent = '📚 단어 암기! (5초)';
+  $('qe-title').textContent = '단어 암기! (5초)';
   $('qe-word-list').innerHTML = quizEventWords.map(w =>
     `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.08);gap:12px;">
       <span style="color:#7ad7f0;font-weight:700;font-size:16px;">${w.english}</span>
@@ -3962,7 +3963,7 @@ function advanceQuizEventToQuiz() {
   }
   $('qe-study').style.display = 'none';
   $('qe-quiz').style.display = 'block';
-  $('qe-title').textContent = '❓ 문제를 맞춰라!';
+  $('qe-title').textContent = '문제를 맞춰라!';
   $('qe-question').textContent = quizEventQuestion.english;
   const cont = $('qe-choices');
   cont.innerHTML = '';
@@ -3987,10 +3988,10 @@ function submitQuizEventChoice(idx: number) {
   const res = $('qe-result') as HTMLElement;
   res.style.display = 'flex';
   if (correct) {
-    res.innerHTML = '🎉 정답!<br><span style="font-size:16px;color:#a0ffb8;">+15 재화 지급!</span>';
+    res.innerHTML = '정답!<br><span style="font-size:16px;color:#a0ffb8;">+15 재화 지급</span>';
     addCurrency(15);
   } else {
-    res.innerHTML = `❌ 오답!<br><span style="font-size:14px;color:#ffb0b0;">정답: ${correctMeaning}</span>`;
+    res.innerHTML = `오답<br><span style="font-size:14px;color:#ffb0b0;">정답: ${correctMeaning}</span>`;
   }
   setTimeout(() => endQuizEvent(), 2000);
 }
@@ -4291,21 +4292,21 @@ $('btn-start').addEventListener('click', () => {
   showScreen('home');
 });
 $('btn-load-progress').addEventListener('click', () => showScreen('login'));
-$('btn-leaderboard').addEventListener('click', () => {
-  showScreen('leaderboard');
-  loadLeaderboard('words');
-  if (lbRefreshInterval) clearInterval(lbRefreshInterval);
-  lbRefreshInterval = setInterval(() => { if (currentScreen === 'leaderboard') loadLeaderboard(lbTab); }, 60000);
-});
 $('btn-lb-back').addEventListener('click', () => {
   if (lbRefreshInterval) { clearInterval(lbRefreshInterval); lbRefreshInterval = null; }
-  showScreen('initial');
+  showScreen('home');
 });
 $('btn-lb-refresh').addEventListener('click', () => loadLeaderboard(lbTab));
 $('lb-tab-words').addEventListener('click', () => loadLeaderboard('words'));
 $('lb-tab-clear').addEventListener('click', () => loadLeaderboard('clear'));
 
 // Home
+$('btn-home-leaderboard').addEventListener('click', () => {
+  showScreen('leaderboard');
+  loadLeaderboard('words');
+  if (lbRefreshInterval) clearInterval(lbRefreshInterval);
+  lbRefreshInterval = setInterval(() => { if (currentScreen === 'leaderboard') loadLeaderboard(lbTab); }, 60000);
+});
 $('btn-home-1p').addEventListener('click', () => {
   gameMode = '1p';
   localSide = 'p1';
