@@ -106,6 +106,19 @@ export async function submitLeaderboard(
   else console.log('[Leaderboard] 저장 성공:', nickname, { wordCount: newWordCount, clearCount: newClearCount, bestTime: newBestTime });
 }
 
+export async function deleteMyLeaderboard(nickname: string): Promise<boolean> {
+  const deviceToken = getDeviceToken();
+  const { data: existing } = await supabase
+    .from('leaderboard')
+    .select('device_token')
+    .eq('nickname', nickname)
+    .maybeSingle();
+  if (!existing) return false;
+  if (existing.device_token && existing.device_token !== deviceToken) return false; // 본인 아님
+  const { error } = await supabase.from('leaderboard').delete().eq('nickname', nickname);
+  return !error;
+}
+
 export async function fetchLeaderboard(
   sortBy: 'word_count' | 'clear_count'
 ): Promise<LeaderboardEntry[]> {

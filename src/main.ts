@@ -7,7 +7,7 @@ import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
 import { FOODS, FOOD_IDS, isFoodId } from './foods';
-import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, submitLeaderboard, fetchLeaderboard } from './supabase';
+import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard } from './supabase';
 import type { UserProfile, LeaderboardEntry } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
@@ -3014,7 +3014,10 @@ document.body.insertAdjacentHTML('beforeend', `
       <button id="lb-tab-words" class="btn primary" style="flex:1;padding:10px;font-size:14px;">단어 랭킹</button>
       <button id="lb-tab-clear" class="btn" style="flex:1;padding:10px;font-size:14px;">클리어 랭킹</button>
     </div>
-    <div id="lb-status" style="font-size:12px;color:#aaa;text-align:right;margin-bottom:8px;"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div id="lb-status" style="font-size:12px;color:#aaa;"></div>
+      <button id="btn-lb-delete" class="btn" style="padding:5px 10px;font-size:12px;color:#ff8080;border-color:rgba(255,100,100,0.3);display:none;">내 기록 삭제</button>
+    </div>
     <div id="lb-list" style="display:flex;flex-direction:column;gap:4px;"></div>
   </div>
 </div>
@@ -3605,8 +3608,10 @@ function fmtTime(sec: number): string {
 // ─── Leaderboard ─────────────────────────────────────────────────────────────
 function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') {
   const list = $('lb-list');
-  if (!entries.length) { list.innerHTML = '<div style="text-align:center;color:#aaa;padding:20px;">아직 기록이 없어요</div>'; return; }
+  if (!entries.length) { list.innerHTML = '<div style="text-align:center;color:#aaa;padding:20px;">아직 기록이 없어요</div>'; ($('btn-lb-delete') as HTMLElement).style.display = 'none'; return; }
   const myNick = loggedInUsername || guestNickname;
+  const hasMyRecord = entries.some(e => e.nickname === myNick);
+  ($('btn-lb-delete') as HTMLElement).style.display = hasMyRecord ? 'block' : 'none';
   list.innerHTML = entries.map((e, i) => {
     const isMe = e.nickname === myNick;
     const rank = i + 1;
@@ -4299,6 +4304,17 @@ $('btn-lb-back').addEventListener('click', () => {
 $('btn-lb-refresh').addEventListener('click', () => loadLeaderboard(lbTab));
 $('lb-tab-words').addEventListener('click', () => loadLeaderboard('words'));
 $('lb-tab-clear').addEventListener('click', () => loadLeaderboard('clear'));
+$('btn-lb-delete').addEventListener('click', async () => {
+  const nick = loggedInUsername || guestNickname;
+  if (!nick) return;
+  if (!confirm(`"${nick}" 의 기록을 삭제할까요?`)) return;
+  const btn = $('btn-lb-delete') as HTMLButtonElement;
+  btn.textContent = '삭제 중...';
+  btn.disabled = true;
+  const ok = await deleteMyLeaderboard(nick);
+  if (ok) { btn.style.display = 'none'; loadLeaderboard(lbTab); }
+  else { btn.textContent = '삭제 실패 (본인 기록만 삭제 가능)'; btn.disabled = false; }
+});
 
 // Home
 $('btn-home-leaderboard').addEventListener('click', () => {
