@@ -94,7 +94,7 @@ export async function submitLeaderboard(
     ? (prev?.best_time ? Math.min(prev.best_time, clearTimeSec) : clearTimeSec)
     : (prev?.best_time ?? null);
 
-  await supabase.from('leaderboard').upsert({
+  const { error } = await supabase.from('leaderboard').upsert({
     nickname,
     device_token: deviceToken,
     word_count: newWordCount,
@@ -102,6 +102,8 @@ export async function submitLeaderboard(
     best_time: newBestTime,
     updated_at: new Date().toISOString(),
   });
+  if (error) console.error('[Leaderboard] 저장 실패:', error.message, error.details);
+  else console.log('[Leaderboard] 저장 성공:', nickname, { wordCount: newWordCount, clearCount: newClearCount, bestTime: newBestTime });
 }
 
 export async function fetchLeaderboard(
