@@ -549,7 +549,7 @@ let p2TowerLevel = 0;
 let p1TowerLastStage = -1;
 let p2TowerLastStage = -1;
 const HP_PER_UPGRADE = 100;  // 2 upgrades: 100 → 200 → 300
-const UPGRADE_COSTS = [15, 20];
+const UPGRADE_COSTS = [10, 15];
 const BASE_HEAL_COST = 3;
 const BASE_HEAL_AMOUNT = 20;
 
