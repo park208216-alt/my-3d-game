@@ -562,12 +562,12 @@ function updateTowerVisual(side: Side) {
   const lastStage = side === 'p1' ? p1TowerLastStage : p2TowerLastStage;
   if (level === lastStage) return;
   const templates = team === 'red' ? redTowerTemplates : violetTowerTemplates;
-  const template = templates[level];
+  const template = templates[Math.min(level, templates.length - 1)];
   if (!template) return;
   if (side === 'p1') p1TowerLastStage = level; else p2TowerLastStage = level;
   const newMesh = tintClone(template);
-  // scale: level 0 = 2.0, level 1 = 3.0, level 2 = 4.0 (doubles at max)
-  newMesh.scale.setScalar(2.0 * (1 + level * 0.5));
+  // scale: level 0 = 2.0, level 1 = 3.0, level 2+ = 4.0
+  newMesh.scale.setScalar(2.0 * (1 + Math.min(level, 2) * 0.5));
   newMesh.position.set(0, 0.4, side === 'p1' ? 2 : FIELD_LEN - 2);
   const oldMesh = side === 'p1' ? p1TowerMesh : p2TowerMesh;
   if (oldMesh) {
@@ -591,13 +591,35 @@ function placeBaseTowers() {
   updateTowerVisual('p2');
 }
 
+function updateCannonMesh() {
+  if (p1CannonMesh) { scene.remove(p1CannonMesh); p1CannonMesh = null; }
+  if (p1CannonLevel > 0 && p1TowerMesh) {
+    const geo = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 8);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.6, metalness: 0.5 });
+    p1CannonMesh = new THREE.Mesh(geo, mat);
+    p1CannonMesh.rotation.x = Math.PI / 2; // point forward
+    p1CannonMesh.position.set(0, 5.5, 2);  // above p1 tower
+    p1CannonMesh.castShadow = true;
+    scene.add(p1CannonMesh);
+  }
+}
+
 // ─── Tower Upgrade ────────────────────────────────────────────────────────────
-let p1TowerLevel = 0; // 0-2: initial / mid / max
+let p1TowerLevel = 0; // 0-3: initial / mid / max / cannon-unlocked
 let p2TowerLevel = 0;
 let p1TowerLastStage = -1;
 let p2TowerLastStage = -1;
-const HP_PER_UPGRADE = 100;  // 2 upgrades: 100 → 200 → 300
-const UPGRADE_COSTS = [10, 15];
+let p1CannonLevel = 0;   // 0=no cannon, 1-3=cannon upgrade level
+let p1CannonMesh: THREE.Mesh | null = null;
+let p1CannonTimer = 0;
+const HP_PER_UPGRADE = 100;  // 3 upgrades: 100 → 200 → 300 → 400
+const UPGRADE_COSTS = [10, 15, 20];
+const CANNON_UPGRADE_COSTS = [8, 12]; // level 1→2, 2→3
+const CANNON_STATS = [
+  { atk: 15, cooldown: 4.0, bulletRadius: 0.15 },
+  { atk: 25, cooldown: 3.0, bulletRadius: 0.22 },
+  { atk: 40, cooldown: 2.0, bulletRadius: 0.30 },
+];
 const BASE_HEAL_COST = 3;
 const BASE_HEAL_AMOUNT = 20;
 
@@ -613,7 +635,7 @@ interface SiegeWeapon {
 }
 
 interface Projectile {
-  type: 'arrow' | 'boulder';
+  type: 'arrow' | 'boulder' | 'cannon';
   mesh: THREE.Object3D | null;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
@@ -621,6 +643,7 @@ interface Projectile {
   aoe: number;
   side: Side;
   done: boolean;
+  hitEnemies?: Set<string>;
 }
 
 const SIEGE_COST = 10;
@@ -823,6 +846,22 @@ function stepProjectiles(dt: number) {
       if (!p.done && Math.abs(p.pos.z - (p.side === 'p1' ? FIELD_LEN : 0)) < 1) p.done = true;
     }
 
+    // Cannon: piercing shot that travels in +z direction
+    if (p.type === 'cannon') {
+      if (!p.hitEnemies) p.hitEnemies = new Set<string>();
+      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && e.state !== 'underground');
+      for (const e of enemies) {
+        const uid = e.id;
+        if (p.hitEnemies.has(uid)) continue;
+        if (Math.abs(e.x - p.pos.x) < 1.0 && Math.abs(e.z - p.pos.z) < 1.5) {
+          p.hitEnemies.add(uid);
+          e.hp = Math.max(0, e.hp - p.damage);
+          if (e.hp <= 0) e.state = 'dead';
+        }
+      }
+      if (p.pos.z > FIELD_LEN) p.done = true;
+    }
+
     // Boulder: hits ground or air unit
     if (p.type === 'boulder') {
       // Check air unit hits mid-flight
@@ -859,6 +898,41 @@ function stepProjectiles(dt: number) {
       projectiles.splice(i, 1);
     }
   }
+}
+
+function stepCannon(dt: number) {
+  if (p1CannonLevel === 0 || !battleActive) return;
+  p1CannonTimer = Math.max(0, p1CannonTimer - dt);
+  if (p1CannonTimer > 0) return;
+
+  const stats = CANNON_STATS[p1CannonLevel - 1];
+  p1CannonTimer = stats.cooldown;
+
+  // Find enemies, sort by furthest z first
+  const enemies = units.filter(e => e.side === 'p2' && e.state !== 'dead' && e.state !== 'underground');
+  if (enemies.length === 0) return;
+
+  // Fire a piercing cannonball
+  const startPos = new THREE.Vector3(0, 3.0, 2);
+  const vel = new THREE.Vector3(0, 0, 15); // fast horizontal shot toward p2
+
+  const geo = new THREE.SphereGeometry(stats.bulletRadius, 8, 8);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x333333, emissive: 0xff6600, emissiveIntensity: 0.8 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(startPos);
+  scene.add(mesh);
+
+  projectiles.push({
+    type: 'cannon',
+    mesh,
+    pos: startPos.clone(),
+    vel,
+    damage: stats.atk,
+    aoe: 0,
+    side: 'p1',
+    done: false,
+    hitEnemies: new Set<string>(),
+  });
 }
 
 function clearSiegeWeapons() {
@@ -2196,7 +2270,7 @@ let isAdmin = false;
 let playerGold = 0;
 let guestNickname = localStorage.getItem('zoo_nickname') || '';
 let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
-let lbTab: 'words' | 'clear' = 'words';
+let lbTab: 'words' | 'clear' | 'wave' = 'words';
 let lbRefreshInterval: ReturnType<typeof setInterval> | null = null;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
@@ -3357,6 +3431,7 @@ document.body.insertAdjacentHTML('beforeend', `
     <div style="display:flex;gap:8px;margin-bottom:14px;">
       <button id="lb-tab-words" class="btn primary" style="flex:1;padding:10px;font-size:14px;">단어 랭킹</button>
       <button id="lb-tab-clear" class="btn" style="flex:1;padding:10px;font-size:14px;">클리어 랭킹</button>
+      <button id="lb-tab-wave" class="btn" style="flex:1;padding:10px;font-size:14px;">최대 웨이브</button>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
       <div id="lb-status" style="font-size:12px;color:#aaa;"></div>
@@ -3807,40 +3882,76 @@ function applyTeamTheme() {
 
 function updateUpgradeButton() {
   const myLevel = localSide === 'p1' ? p1TowerLevel : p2TowerLevel;
+  const cannonLv = localSide === 'p1' ? p1CannonLevel : 0; // cannon only for p1 in 1p
   const btn = $('btn-upgrade') as HTMLButtonElement;
   const info = $('upgrade-info');
-  if (myLevel >= 2) {
-    btn.textContent = '기지 최대 레벨';
-    btn.style.opacity = '0.4';
-    btn.style.cursor = 'not-allowed';
-    info.textContent = 'MAX';
-  } else {
+
+  if (myLevel < 3) {
+    // Tower upgrade
     const cost = UPGRADE_COSTS[myLevel];
     btn.textContent = `업그레이드 (${cost}재화)`;
     btn.style.opacity = currency >= cost ? '1' : '0.4';
     btn.style.cursor = currency >= cost ? 'pointer' : 'not-allowed';
     info.textContent = `Lv${myLevel + 1}→${myLevel + 2}`;
+  } else if (cannonLv < 3) {
+    // Cannon upgrade
+    if (cannonLv === 0) {
+      // Should not happen (cannon activates at tower level 3)
+      btn.textContent = '캐논 준비중';
+      btn.style.opacity = '0.4';
+      btn.style.cursor = 'not-allowed';
+      info.textContent = '';
+    } else {
+      const upgCost = CANNON_UPGRADE_COSTS[cannonLv - 1];
+      btn.textContent = `캐논 강화 (${upgCost}재화)`;
+      btn.style.opacity = currency >= upgCost ? '1' : '0.4';
+      btn.style.cursor = currency >= upgCost ? 'pointer' : 'not-allowed';
+      info.textContent = `캐논 Lv${cannonLv}→${cannonLv + 1}`;
+    }
+  } else {
+    btn.textContent = '완전 업그레이드';
+    btn.style.opacity = '0.4';
+    btn.style.cursor = 'not-allowed';
+    info.textContent = 'MAX';
   }
 }
 
 function upgradeBase() {
   if (!battleActive) return;
   const myLevel = localSide === 'p1' ? p1TowerLevel : p2TowerLevel;
-  if (myLevel >= 2) return;
-  const cost = UPGRADE_COSTS[myLevel];
-  if (currency < cost) return;
-  spendCurrency(cost);
-  if (gameMode === '1p') {
-    p1TowerLevel++;
+
+  if (myLevel < 3) {
+    // Tower upgrade
+    const cost = UPGRADE_COSTS[myLevel];
+    if (currency < cost) return;
+    spendCurrency(cost);
+    if (gameMode === '1p') {
+      p1TowerLevel++;
+      sfx('upgrade');
+      const myBase = p1Base;
+      myBase.maxHp += HP_PER_UPGRADE;
+      myBase.hp = Math.min(myBase.maxHp, myBase.hp + HP_PER_UPGRADE);
+      myBase.lastHp = -1;
+      p1TowerLastStage = -1;
+      updateTowerVisual('p1');
+      // When reaching level 3, activate cannon
+      if (p1TowerLevel === 3) {
+        p1CannonLevel = 1;
+        updateCannonMesh();
+      }
+    } else {
+      socket.emit('battleUpgrade');
+    }
+  } else if (gameMode === '1p' && p1CannonLevel > 0 && p1CannonLevel < 3) {
+    // Cannon upgrade
+    const cost = CANNON_UPGRADE_COSTS[p1CannonLevel - 1];
+    if (currency < cost) return;
+    spendCurrency(cost);
+    p1CannonLevel++;
     sfx('upgrade');
-    const myBase = localSide === 'p1' ? p1Base : p2Base;
-    myBase.maxHp += HP_PER_UPGRADE;
-    myBase.hp = Math.min(myBase.maxHp, myBase.hp + HP_PER_UPGRADE);
-    myBase.lastHp = -1;
-    p1TowerLastStage = -1;
-    updateTowerVisual('p1');
+    updateCannonMesh();
   } else {
-    socket.emit('battleUpgrade');
+    return; // nothing to upgrade
   }
   updateHud();
 }
@@ -3923,6 +4034,9 @@ function clearBattle() {
   p2TowerLevel = 0;
   p1TowerLastStage = -1;
   p2TowerLastStage = -1;
+  p1CannonLevel = 0;
+  p1CannonTimer = 0;
+  if (p1CannonMesh) { scene.remove(p1CannonMesh); p1CannonMesh = null; }
   p1Team = 'red';
   p2Team = 'violet';
   clearSiegeWeapons();
@@ -4048,7 +4162,7 @@ function fmtTime(sec: number): string {
 }
 
 // ─── Leaderboard ─────────────────────────────────────────────────────────────
-function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') {
+function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear' | 'wave') {
   const list = $('lb-list');
   if (!entries.length) { list.innerHTML = '<div style="text-align:center;color:#aaa;padding:20px;">아직 기록이 없어요</div>'; ($('btn-lb-delete') as HTMLElement).style.display = 'none'; return; }
   const myNick = loggedInUsername || guestNickname;
@@ -4061,7 +4175,9 @@ function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') 
     const accuracy = (e.total_words ?? 0) > 0 ? Math.round((e.word_count / e.total_words) * 100) : 100;
     const val = tab === 'words'
       ? `${e.word_count}개 (정답률 ${accuracy}%)`
-      : `${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}${e.rounds_completed ? ` · ${e.rounds_completed}라운드` : ''}`;
+      : tab === 'clear'
+      ? `${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}${e.rounds_completed ? ` · ${e.rounds_completed}라운드` : ''}`
+      : `${e.rounds_completed ?? 0}라운드${e.best_wave_time ? ` · ${fmtTime(e.best_wave_time)}` : ''}`;
     const rankColor = rank === 1 ? '#ffd700' : rank === 2 ? '#c0c0c0' : rank === 3 ? '#cd7f32' : '#aaa';
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:${isMe ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isMe ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.07)'};">
       <span style="min-width:34px;font-size:13px;font-weight:700;color:${rankColor};">${rankLabel}</span>
@@ -4071,18 +4187,22 @@ function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') 
   }).join('');
 }
 
-async function loadLeaderboard(tab: 'words' | 'clear') {
+async function loadLeaderboard(tab: 'words' | 'clear' | 'wave') {
   lbTab = tab;
   // Update tab button styles
   ($('lb-tab-words') as HTMLButtonElement).className = `btn ${tab === 'words' ? 'primary' : ''}`;
   ($('lb-tab-words') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
   ($('lb-tab-clear') as HTMLButtonElement).className = `btn ${tab === 'clear' ? 'primary' : ''}`;
   ($('lb-tab-clear') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
+  ($('lb-tab-wave') as HTMLButtonElement).className = `btn ${tab === 'wave' ? 'primary' : ''}`;
+  ($('lb-tab-wave') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
   $('lb-status').textContent = '불러오는 중...';
-  const sortBy = tab === 'words' ? 'word_count' : 'clear_count';
+  const sortBy = tab === 'words' ? 'word_count' : tab === 'clear' ? 'clear_count' : 'rounds_completed';
   const entries = await fetchLeaderboard(sortBy);
   renderLeaderboard(entries, tab);
-  $('lb-status').textContent = `최근 갱신: ${new Date().toLocaleTimeString('ko-KR')} · 상위 100명`;
+  $('lb-status').textContent = tab === 'wave'
+    ? `최근 갱신: ${new Date().toLocaleTimeString('ko-KR')} · 상위 10명`
+    : `최근 갱신: ${new Date().toLocaleTimeString('ko-KR')} · 상위 100명`;
 }
 
 // ─── Currency Slots Init ──────────────────────────────────────────────────────
@@ -4135,9 +4255,9 @@ function updateHud() {
 
   // Timer & round
   if (gameMode === '1p') {
-    $('top-round').textContent = `라운드 ${round}/${AI_ROUNDS.length}`;
+    $('top-round').textContent = `라운드 ${round}`;
     $('top-timer').textContent = fmtTime(roundTimer);
-    $('hud-round').textContent = `라운드 ${round}/${AI_ROUNDS.length}`;
+    $('hud-round').textContent = `라운드 ${round}`;
     $('hud-timer').textContent = `${Math.ceil(roundTimer)}초`;
   } else {
     $('top-round').textContent = '2인 대전';
@@ -4178,19 +4298,29 @@ function step1PAI(dt: number) {
 
   const roundIdx = Math.min(round - 1, AI_ROUNDS.length - 1);
   const roundCfg = AI_ROUNDS[roundIdx];
+  const lastRoundCfg = AI_ROUNDS[AI_ROUNDS.length - 1];
+
+  // For rounds beyond the defined table, scale interval down
+  const effectiveInterval = round > AI_ROUNDS.length
+    ? Math.max(0.8, lastRoundCfg.interval - (round - AI_ROUNDS.length) * 0.15)
+    : roundCfg.interval;
 
   if (aiSpawnTimer <= 0) {
-    aiSpawnTimer = roundCfg.interval * (0.8 + Math.random() * 0.4);
+    aiSpawnTimer = effectiveInterval * (0.8 + Math.random() * 0.4);
     const pool = roundCfg.pool;
     const id = pool[Math.floor(Math.random() * pool.length)];
     spawnUnit(id, 'p2');
   }
 
   if (roundTimer <= 0) {
-    // advance to next round (no win by timer — only base destruction wins)
-    if (round < AI_ROUNDS.length) round++;
+    // Always advance round — no cap (infinite waves)
+    round++;
     roundTimer = ROUND_DURATION;
-    aiSpawnTimer = AI_ROUNDS[Math.min(round - 1, AI_ROUNDS.length - 1)].interval;
+    const nextRoundIdx = Math.min(round - 1, AI_ROUNDS.length - 1);
+    const nextLastRoundCfg = AI_ROUNDS[AI_ROUNDS.length - 1];
+    aiSpawnTimer = round > AI_ROUNDS.length
+      ? Math.max(0.8, nextLastRoundCfg.interval - (round - AI_ROUNDS.length) * 0.15)
+      : AI_ROUNDS[nextRoundIdx].interval;
   }
 
   checkBossThresholds();
@@ -4240,7 +4370,7 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
     const nick = loggedInUsername || guestNickname;
     if (nick) {
       const totalAttempted = correctWords.length + wrongWords;
-      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null, wrongWords, totalAttempted, round);
+      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null, wrongWords, totalAttempted, round, battleClock);
     }
 
     const row = (label: string, val: string) =>
@@ -4872,6 +5002,7 @@ $('btn-lb-back').addEventListener('click', () => {
 $('btn-lb-refresh').addEventListener('click', () => loadLeaderboard(lbTab));
 $('lb-tab-words').addEventListener('click', () => loadLeaderboard('words'));
 $('lb-tab-clear').addEventListener('click', () => loadLeaderboard('clear'));
+$('lb-tab-wave').addEventListener('click', () => loadLeaderboard('wave'));
 $('btn-lb-delete').addEventListener('click', async () => {
   const nick = loggedInUsername || guestNickname;
   if (!nick) return;
@@ -5069,6 +5200,7 @@ function animate() {
       }
     }
     if (gameMode === '1p' && !quizEventActive) stepSiegeWeapons(dt);
+    if (gameMode === '1p') stepCannon(dt);
     stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
     if (gameMode === '1p') {
       stepFoodProjectiles(dt);

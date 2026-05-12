@@ -75,12 +75,14 @@ export interface LeaderboardEntry {
   wrong_count: number;
   total_words: number;
   rounds_completed: number;
+  best_wave_time: number | null;
 }
 
 // IMPORTANT: Run this SQL in Supabase Dashboard > SQL Editor before using these fields:
 // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS wrong_count INTEGER DEFAULT 0;
 // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS total_words INTEGER DEFAULT 0;
 // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS rounds_completed INTEGER DEFAULT 0;
+// ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS best_wave_time FLOAT;
 
 export async function submitLeaderboard(
   nickname: string,
@@ -89,7 +91,8 @@ export async function submitLeaderboard(
   clearTimeSec: number | null,
   wrongCount: number = 0,
   totalWords: number = 0,
-  roundsCompleted: number = 0
+  roundsCompleted: number = 0,
+  bestWaveTimeSec: number | null = null
 ): Promise<void> {
   const deviceToken = getDeviceToken();
 
@@ -117,6 +120,16 @@ export async function submitLeaderboard(
   const newTotalWords = Math.max(totalWords, prev?.total_words ?? 0);
   const newRoundsCompleted = Math.max(roundsCompleted, prev?.rounds_completed ?? 0);
 
+  // best_wave_time: track best time for highest rounds_completed
+  let newBestWaveTime: number | null = prev?.best_wave_time ?? null;
+  if (roundsCompleted > (prev?.rounds_completed ?? 0)) {
+    newBestWaveTime = bestWaveTimeSec;
+  } else if (roundsCompleted === (prev?.rounds_completed ?? 0) && bestWaveTimeSec !== null) {
+    if (prev?.best_wave_time == null || bestWaveTimeSec < prev.best_wave_time) {
+      newBestWaveTime = bestWaveTimeSec;
+    }
+  }
+
   const { error } = await supabase.from('leaderboard').upsert({
     nickname,
     device_token: deviceToken,
@@ -126,6 +139,7 @@ export async function submitLeaderboard(
     wrong_count: newWrongCount,
     total_words: newTotalWords,
     rounds_completed: newRoundsCompleted,
+    best_wave_time: newBestWaveTime,
     updated_at: new Date().toISOString(),
   });
   if (error) console.error('[Leaderboard] 저장 실패:', error.message, error.details);
@@ -146,13 +160,25 @@ export async function deleteMyLeaderboard(nickname: string): Promise<boolean> {
 }
 
 export async function fetchLeaderboard(
-  sortBy: 'word_count' | 'clear_count'
+  sortBy: 'word_count' | 'clear_count' | 'rounds_completed'
 ): Promise<LeaderboardEntry[]> {
-  const { data, error } = await supabase
-    .from('leaderboard')
-    .select('*')
-    .order(sortBy, { ascending: false })
-    .limit(100);
+  let query = supabase.from('leaderboard').select('*');
+  if (sortBy === 'rounds_completed') {
+    query = query
+      .order('rounds_completed', { ascending: false })
+      .order('best_wave_time', { ascending: true, nullsFirst: false })
+      .limit(10);
+  } else if (sortBy === 'clear_count') {
+    query = query
+      .not('clear_count', 'eq', 0)
+      .order('clear_count', { ascending: false })
+      .limit(100);
+  } else {
+    query = query
+      .order(sortBy, { ascending: false })
+      .limit(100);
+  }
+  const { data, error } = await query;
   if (error) {
     console.warn('[Leaderboard] fetch failed — make sure the "leaderboard" table exists in Supabase:', error.message);
     return [];
