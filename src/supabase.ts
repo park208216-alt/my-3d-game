@@ -30,7 +30,7 @@ export interface UserProfile {
 export async function loadProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
   if (error || !data) return null;
-  return { gold: data.gold ?? 0, deck: data.deck ?? DEFAULT_DECK, owned_animals: data.owned_animals ?? ALL_ANIMALS };
+  return { gold: data.gold ?? 0, deck: data.deck ?? DEFAULT_DECK, owned_animals: data.owned_animals ?? DEFAULT_DECK };
 }
 
 export async function saveProfile(userId: string, profile: UserProfile): Promise<boolean> {
@@ -41,7 +41,7 @@ export async function saveProfile(userId: string, profile: UserProfile): Promise
 export async function ensureProfile(userId: string): Promise<UserProfile> {
   const existing = await loadProfile(userId);
   if (existing) return existing;
-  const fresh: UserProfile = { gold: 0, deck: [...DEFAULT_DECK], owned_animals: [...ALL_ANIMALS] };
+  const fresh: UserProfile = { gold: 0, deck: [...DEFAULT_DECK], owned_animals: [...DEFAULT_DECK] };
   await supabase.from('profiles').insert({ id: userId, ...fresh });
   return fresh;
 }

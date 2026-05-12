@@ -2961,9 +2961,9 @@ document.body.insertAdjacentHTML('beforeend', `
     <div style="width:100%;display:flex;justify-content:space-between;align-items:center;">
       <button class="btn" id="btn-shop-back" style="padding:10px 18px;font-size:14px;">← 돌아가기</button>
       <h2 style="margin:0;">상점</h2>
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
         <span id="shop-gold" style="font-size:14px;color:#ffd060;font-weight:700;">0 G</span>
-        <button id="btn-test-gold" style="font-size:11px;padding:4px 8px;border-radius:8px;border:1px solid rgba(255,220,0,0.4);background:rgba(255,220,0,0.12);color:#ffd060;cursor:pointer;">+100G 테스트</button>
+        <span id="shop-owned" style="font-size:11px;color:#a0ffb8;opacity:0.8;">보유 0 / 0</span>
       </div>
     </div>
     <div id="shop-chest-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;width:100%;max-width:480px;"></div>
@@ -3225,49 +3225,74 @@ if (savedNick) ($('in-nickname') as HTMLInputElement).value = savedNick;
 // ─── Deck Screen ──────────────────────────────────────────────────────────────
 const DECK_MAX = 6;
 let playerDeck: string[] = [...DEFAULT_DECK];
+let playerOwnedAnimals: string[] = [...DEFAULT_DECK];
 
 function buildDeckCards() {
   const container = $('deck-cards');
   container.innerHTML = '';
-  // Animal cards
-  for (const id of ANIMAL_IDS) {
-    const d = ANIMALS[id];
-    const card = document.createElement('div');
-    card.dataset.id = id;
-    card.style.cssText = [
-      'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,255,255,0.15);',
-      'background:rgba(255,255,255,0.05);text-align:center;font-size:12px;cursor:pointer;',
-      'transition:border-color 0.12s,background 0.12s;user-select:none;',
-    ].join('');
-    card.innerHTML = `
-      <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;">${d.name}</div>
-      <div style="opacity:0.75;line-height:1.6;font-size:11px;">
-        HP ${d.hp} / ATK ${d.atk}<br>
-        SPD ${d.spd} / 비용 <b>${d.cost}</b>
-      </div>`;
-    card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
-    container.appendChild(card);
+
+  const ownedAnimalIds = ANIMAL_IDS.filter(id => playerOwnedAnimals.includes(id));
+  const ownedFoodIds   = FOOD_IDS.filter(id => playerOwnedAnimals.includes(id));
+
+  if (ownedAnimalIds.length === 0 && ownedFoodIds.length === 0) {
+    container.innerHTML = `<div style="grid-column:1/-1;text-align:center;opacity:0.55;padding:32px 0;font-size:14px;">
+      보유한 캐릭터가 없습니다.<br>상점에서 상자를 열어 캐릭터를 획득하세요.
+    </div>`;
+    refreshDeckCards();
+    return;
   }
-  // Food cards (magic items)
-  for (const id of FOOD_IDS) {
-    const f = FOODS[id];
-    const card = document.createElement('div');
-    card.dataset.id = id;
-    card.style.cssText = [
-      'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,200,80,0.30);',
-      `background:linear-gradient(180deg,rgba(60,30,5,0.55),rgba(20,10,2,0.55));text-align:center;font-size:12px;cursor:pointer;`,
-      'transition:border-color 0.12s,background 0.12s;user-select:none;position:relative;',
-    ].join('');
-    card.innerHTML = `
-      <div style="position:absolute;top:4px;right:6px;font-size:9px;color:#ffd060;font-weight:700;letter-spacing:0.5px;">FOOD</div>
-      <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.7);">${f.name}</div>
-      <div style="opacity:0.85;line-height:1.4;font-size:10px;color:#fff5dc;min-height:28px;">
-        ${f.desc}
-      </div>
-      <div style="margin-top:4px;font-size:11px;color:#ffd060;">비용 <b>${f.cost}</b></div>`;
-    card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
-    container.appendChild(card);
+
+  // Section header – Animals
+  if (ownedAnimalIds.length > 0) {
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'grid-column:1/-1;font-size:12px;font-weight:700;color:#a0ffb8;letter-spacing:1px;margin-top:4px;';
+    hdr.textContent = `캐릭터 (${ownedAnimalIds.length})`;
+    container.appendChild(hdr);
+    for (const id of ownedAnimalIds) {
+      const d = ANIMALS[id];
+      const card = document.createElement('div');
+      card.dataset.id = id;
+      card.style.cssText = [
+        'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,255,255,0.15);',
+        'background:rgba(255,255,255,0.05);text-align:center;font-size:12px;cursor:pointer;',
+        'transition:border-color 0.12s,background 0.12s;user-select:none;',
+      ].join('');
+      card.innerHTML = `
+        <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;">${d.name}</div>
+        <div style="opacity:0.75;line-height:1.6;font-size:11px;">
+          HP ${d.hp} / ATK ${d.atk}<br>
+          SPD ${d.spd} / 비용 <b>${d.cost}</b>
+        </div>`;
+      card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
+      container.appendChild(card);
+    }
   }
+
+  // Section header – Foods
+  if (ownedFoodIds.length > 0) {
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'grid-column:1/-1;font-size:12px;font-weight:700;color:#ffd060;letter-spacing:1px;margin-top:10px;';
+    hdr.textContent = `마법 아이템 (${ownedFoodIds.length})`;
+    container.appendChild(hdr);
+    for (const id of ownedFoodIds) {
+      const f = FOODS[id];
+      const card = document.createElement('div');
+      card.dataset.id = id;
+      card.style.cssText = [
+        'padding:10px 8px;border-radius:12px;border:2px solid rgba(255,200,80,0.30);',
+        'background:linear-gradient(180deg,rgba(60,30,5,0.55),rgba(20,10,2,0.55));text-align:center;font-size:12px;cursor:pointer;',
+        'transition:border-color 0.12s,background 0.12s;user-select:none;position:relative;',
+      ].join('');
+      card.innerHTML = `
+        <div style="position:absolute;top:4px;right:6px;font-size:9px;color:#ffd060;font-weight:700;letter-spacing:0.5px;">FOOD</div>
+        <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.7);">${f.name}</div>
+        <div style="opacity:0.85;line-height:1.4;font-size:10px;color:#fff5dc;min-height:28px;">${f.desc}</div>
+        <div style="margin-top:4px;font-size:11px;color:#ffd060;">비용 <b>${f.cost}</b></div>`;
+      card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
+      container.appendChild(card);
+    }
+  }
+
   refreshDeckCards();
 }
 
@@ -4161,7 +4186,7 @@ function rollAnimal(grade: string): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function showResultCard(itemId: string, grade: string) {
+function showResultCard(itemId: string, grade: string, isNew: boolean) {
   const isFood = isFoodId(itemId);
   const def = isFood ? FOODS[itemId] : ANIMALS[itemId];
   if (!def) return;
@@ -4183,9 +4208,13 @@ function showResultCard(itemId: string, grade: string) {
       </div>`;
   }
   const tag = isFood ? `<div style="font-size:10px;color:#ffd060;letter-spacing:2px;margin-bottom:4px;">FOOD</div>` : '';
+  const newBadge = isNew
+    ? `<div style="font-size:11px;font-weight:900;color:#00ff88;letter-spacing:2px;margin-bottom:8px;text-shadow:0 0 8px #00ff8899;">NEW!</div>`
+    : `<div style="font-size:11px;font-weight:700;color:#ffaa44;letter-spacing:1px;margin-bottom:8px;">중복 획득 (+1G 환급)</div>`;
   card.innerHTML = `
     <div style="background:rgba(8,20,5,0.95);border:2px solid ${gc};border-radius:18px;padding:20px 28px;min-width:220px;text-align:center;box-shadow:0 0 30px ${gc}44;">
-      <div style="font-size:12px;font-weight:700;color:${gc};letter-spacing:2px;margin-bottom:10px;">${grade}등급</div>
+      <div style="font-size:12px;font-weight:700;color:${gc};letter-spacing:2px;margin-bottom:6px;">${grade}등급</div>
+      ${newBadge}
       ${tag}
       <div style="width:56px;height:56px;border-radius:50%;background:${hex};margin:0 auto 12px;box-shadow:0 0 18px ${hex}99;"></div>
       <div style="font-size:24px;font-weight:900;color:#fff;margin-bottom:12px;">${def.name}</div>
@@ -4206,6 +4235,9 @@ function buildShopChests() {
   const grid = $('shop-chest-grid');
   grid.innerHTML = '';
   ($('shop-gold') as HTMLElement).textContent = `${playerGold} G`;
+  const totalItems = ANIMAL_IDS.length + FOOD_IDS.length;
+  const shopOwned = $('shop-owned') as HTMLElement | null;
+  if (shopOwned) shopOwned.textContent = `보유 ${playerOwnedAnimals.length} / ${totalItems}`;
   for (const { grade, label, price, borderColor, labelColor } of CHEST_GRADES) {
     const card = document.createElement('div');
     card.className = 'chest-card';
@@ -4239,6 +4271,14 @@ function triggerChestOpen(grade: string, price: number) {
   playerGold -= price;
   const rolledAnimal = rollAnimal(grade);
 
+  // Unlock animal / give duplicate refund
+  const isNew = !playerOwnedAnimals.includes(rolledAnimal);
+  if (isNew) {
+    playerOwnedAnimals.push(rolledAnimal);
+  } else {
+    playerGold += 1; // duplicate refund
+  }
+
   img.src = `${B}ui/chest/chest_closed_${grade}.png`;
   img.style.opacity = '1';
   resultCard.style.display = 'none';
@@ -4262,7 +4302,7 @@ function triggerChestOpen(grade: string, price: number) {
         setTimeout(() => {
           img.src = `${B}ui/chest/chest_open_${grade}.png`;
           img.style.opacity = '1';
-          showResultCard(rolledAnimal, grade);
+          showResultCard(rolledAnimal, grade, isNew);
           closeBtn.style.opacity = '1';
           closeBtn.style.pointerEvents = 'auto';
         }, 200);
@@ -4277,7 +4317,7 @@ $('btn-chest-close').addEventListener('click', () => {
   updateHomeDisplay();
 });
 
-$('btn-test-gold').addEventListener('click', () => {
+$('btn-test-gold')?.addEventListener('click', () => {
   playerGold += 100;
   buildShopChests();
 });
@@ -4293,6 +4333,7 @@ $('btn-start').addEventListener('click', () => {
   loggedInUsername = loggedInUsername || nick; // keep logged-in username if exists
   guestNickname = nick;
   playerGold = 0;
+  playerOwnedAnimals = [...DEFAULT_DECK];
   updateHomeDisplay();
   showScreen('home');
 });
@@ -4359,7 +4400,7 @@ $('btn-home-save').addEventListener('click', async () => {
   const btn = $('btn-home-save') as HTMLButtonElement;
   btn.textContent = '저장 중...';
   btn.disabled = true;
-  const ok = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...ANIMAL_IDS] });
+  const ok = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...playerOwnedAnimals] });
   btn.textContent = ok ? '저장 완료 ✓' : '저장 실패';
   btn.disabled = false;
   setTimeout(() => { btn.textContent = '진행상황 저장하기'; }, 2000);
@@ -4490,6 +4531,10 @@ async function applyProfile(username: string, userId: string, profile: UserProfi
   loggedInUserId = userId;
   playerGold = profile.gold;
   playerDeck = profile.deck.length ? profile.deck : [...DEFAULT_DECK];
+  playerOwnedAnimals = profile.owned_animals.length ? profile.owned_animals : [...DEFAULT_DECK];
+  // Sanitize deck: remove any item no longer owned
+  playerDeck = playerDeck.filter(id => playerOwnedAnimals.includes(id));
+  if (playerDeck.length === 0) playerDeck = [...DEFAULT_DECK].filter(id => playerOwnedAnimals.includes(id));
   updateHomeDisplay();
   showScreen('home');
 }
@@ -4529,7 +4574,7 @@ async function handleSignupConfirm() {
   showScreen('loading');
   if (signupFrom === 'home') {
     // 게스트 진행 상황(덱·골드)을 새 계정에 저장
-    const profile = { gold: playerGold, deck: [...playerDeck], owned_animals: [...ANIMAL_IDS] };
+    const profile = { gold: playerGold, deck: [...playerDeck], owned_animals: [...playerOwnedAnimals] };
     await supabase.from('profiles').upsert({ id: data.user.id, ...profile });
     await applyProfile(id, data.user.id, profile);
   } else {
