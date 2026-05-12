@@ -562,7 +562,9 @@ function updateTowerVisual(side: Side) {
   const lastStage = side === 'p1' ? p1TowerLastStage : p2TowerLastStage;
   if (level === lastStage) return;
   const templates = team === 'red' ? redTowerTemplates : violetTowerTemplates;
-  const template = templates[Math.min(level, templates.length - 1)];
+  // Level 3 (cannon) uses the lv1 tower model (turret shape) so the cannon barrel is visible
+  const templateIdx = level === 3 ? 1 : Math.min(level, templates.length - 1);
+  const template = templates[templateIdx];
   if (!template) return;
   if (side === 'p1') p1TowerLastStage = level; else p2TowerLastStage = level;
   const newMesh = tintClone(template);
@@ -616,9 +618,9 @@ const HP_PER_UPGRADE = 100;  // 3 upgrades: 100 → 200 → 300 → 400
 const UPGRADE_COSTS = [10, 15, 20];
 const CANNON_UPGRADE_COSTS = [8, 12]; // level 1→2, 2→3
 const CANNON_STATS = [
-  { atk: 15, cooldown: 4.0, bulletRadius: 0.15 },
-  { atk: 25, cooldown: 3.0, bulletRadius: 0.22 },
-  { atk: 40, cooldown: 2.0, bulletRadius: 0.30 },
+  { atk: 15, cooldown: 14.0, bulletRadius: 0.15 },
+  { atk: 25, cooldown: 10.0, bulletRadius: 0.22 },
+  { atk: 40, cooldown: 7.0, bulletRadius: 0.30 },
 ];
 const BASE_HEAL_COST = 3;
 const BASE_HEAL_AMOUNT = 20;
@@ -908,11 +910,11 @@ function stepCannon(dt: number) {
   const stats = CANNON_STATS[p1CannonLevel - 1];
   p1CannonTimer = stats.cooldown;
 
-  // Find enemies, sort by furthest z first
-  const enemies = units.filter(e => e.side === 'p2' && e.state !== 'dead' && e.state !== 'underground');
+  // Only target enemies in the first half of the field (cannon range = field center)
+  const enemies = units.filter(e => e.side === 'p2' && e.state !== 'dead' && e.state !== 'underground' && e.z <= FIELD_LEN / 2);
   if (enemies.length === 0) return;
 
-  // Fire a piercing cannonball toward furthest enemy
+  // Fire toward the furthest in-range enemy
   const target = enemies.reduce((a, b) => b.z > a.z ? b : a);
   const startPos = new THREE.Vector3(0, 3.0, 2);
   const targetPos = new THREE.Vector3(target.x, 1.0, target.z);
@@ -3530,7 +3532,6 @@ document.body.insertAdjacentHTML('beforeend', `
       <input id="type-input" placeholder="한글 뜻 입력 후 Enter" style="display:none;flex:1;padding:6px 10px;border-radius:8px;border:1px solid rgba(120,200,255,0.6);background:rgba(10,20,40,0.8);color:#fff;font-size:13px;outline:none;">
     </div>
     <div id="quiz-msg" style="font-size:12px;color:#ff9b9b;min-height:16px;text-align:center;"></div>
-    <div id="word-log" style="overflow-y:auto;max-height:68px;display:flex;flex-direction:column-reverse;gap:1px;border-top:1px solid rgba(255,255,255,0.08);padding-top:4px;"></div>
   </div>
 </div>
 `);
@@ -4024,7 +4025,6 @@ function clearBattle() {
   p1DragonKilled = false;
   correctWords = [];
   wrongWords = 0;
-  const wlog = $('word-log'); if (wlog) wlog.innerHTML = '';
   spamWrongLog = [];
   spamLockUntil = 0;
   if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
@@ -4312,7 +4312,17 @@ function step1PAI(dt: number) {
     aiSpawnTimer = effectiveInterval * (0.8 + Math.random() * 0.4);
     const pool = roundCfg.pool;
     const id = pool[Math.floor(Math.random() * pool.length)];
-    spawnUnit(id, 'p2');
+    const u = spawnUnit(id, 'p2');
+
+    // Scale HP and visual size for late rounds (round 8+)
+    if (round > 7) {
+      const hpMult = 1 + (round - 7) * 0.4; // +40% HP per round over 7
+      u.hp = Math.round(u.hp * hpMult);
+      u.maxHp = Math.round(u.maxHp * hpMult);
+      if (u.hpSprite) { scene.remove(u.hpSprite); u.hpSprite = makeHpSprite(u.hp, u.hp); u.hpSprite.position.copy((u.mesh?.position ?? new THREE.Vector3()).clone().setY((u.mesh?.position.y ?? 1) + ANIMALS[id].size + 0.6)); scene.add(u.hpSprite); }
+      const sizeMult = Math.min(1 + (round - 7) * 0.07, 2.5);
+      if (u.mesh) u.mesh.scale.multiplyScalar(sizeMult);
+    }
   }
 
   if (roundTimer <= 0) {
@@ -4457,15 +4467,6 @@ function addWordLog(en: string, ko: string) {
   const prevMax = getCurrencyMax();
   correctWords.push({ en, ko });
   const newMax = getCurrencyMax();
-  // Add row to in-battle word log
-  const log = $('word-log');
-  if (log) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;font-size:11px;padding:1px 0;';
-    row.innerHTML = `<span style="color:#a8e6ff;font-weight:700;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${en}</span><span style="opacity:0.75;">${ko}</span>`;
-    log.prepend(row);
-  }
-  // Notify if max currency increased
   if (newMax > prevMax) {
     showQuizMsg(`최대 재화 ${prevMax} → ${newMax} 증가!`);
     quizMsgTimer = 2.5;
