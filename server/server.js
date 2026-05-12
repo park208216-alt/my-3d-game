@@ -275,20 +275,22 @@ function startServerGame(roomCode, room) {
     stepGame(gs);
     stepSiegeWeapons(gs, TICK_MS / 1000, io, roomCode);
 
+    const r2 = v => Math.round(v * 100) / 100;
     io.to(roomCode).emit('gameState', {
-      units: gs.units.map(u => ({
-        id: u.id, animalId: u.animalId, side: u.side,
-        z: u.z, x: u.x, hp: u.hp, maxHp: u.maxHp, state: u.state,
-        stingerReady: u.stingerReady,
-        paralyzedUntil: u.paralyzedUntil,
-      })),
-      p1BaseHp: gs.p1BaseHp,
-      p2BaseHp: gs.p2BaseHp,
+      units: gs.units.map(u => {
+        const e = { id: u.id, animalId: u.animalId, side: u.side,
+          z: r2(u.z), x: r2(u.x), hp: Math.ceil(u.hp), maxHp: u.maxHp, state: u.state };
+        if (u.stingerReady !== undefined) e.stingerReady = u.stingerReady;
+        if (u.paralyzedUntil) e.paralyzedUntil = u.paralyzedUntil;
+        return e;
+      }),
+      p1BaseHp: Math.ceil(gs.p1BaseHp),
+      p2BaseHp: Math.ceil(gs.p2BaseHp),
       p1MaxHp: gs.p1MaxHp,
       p2MaxHp: gs.p2MaxHp,
       p1UpgradeLevel: gs.p1UpgradeLevel,
       p2UpgradeLevel: gs.p2UpgradeLevel,
-      timeLeft: gs.timeLeft,
+      timeLeft: Math.ceil(gs.timeLeft),
       p1Currency: gs.p1Currency,
       p2Currency: gs.p2Currency,
       siegeState: {

@@ -4559,19 +4559,23 @@ socket.on('gameState', (payload: {
   // Sync siege weapon meshes
   if (payload.siegeState) syncSiegeMeshes(payload.siegeState);
 
+  // O(1) lookup via Map
+  const unitMap = new Map(units.map(u => [u.id, u]));
   const serverIds = new Set(payload.units.map(u => u.id));
 
   for (const su of payload.units) {
-    const existing = units.find(u => u.id === su.id);
+    const existing = unitMap.get(su.id);
     if (existing) {
-      existing.z = su.z; existing.x = su.x;
+      // Store server target for smooth interpolation; snap x immediately (no x motion)
+      (existing as any).targetZ = su.z;
+      existing.x = su.x;
       existing.hp = su.hp; existing.state = su.state;
-      // Fix 2: sync special ability states
       if (su.stingerReady !== undefined) existing.stingerReady = su.stingerReady;
       if (su.paralyzedUntil !== undefined) existing.paralyzedUntil = su.paralyzedUntil;
     } else {
       const u = spawnUnit(su.animalId, su.side, su.id);
       u.z = su.z; u.x = su.x; u.hp = su.hp; u.maxHp = su.maxHp; u.state = su.state;
+      (u as any).targetZ = su.z;
       if (su.stingerReady !== undefined) u.stingerReady = su.stingerReady;
       if (su.paralyzedUntil !== undefined) u.paralyzedUntil = su.paralyzedUntil;
     }
@@ -5006,6 +5010,14 @@ function animate() {
     }
 
     if (gameMode === '1p' && !quizEventActive) stepUnits(dt);
+    // 2P: interpolate unit z toward server target for smooth movement
+    if (gameMode === '2p') {
+      const alpha = Math.min(1, dt * 20); // ~50ms to close gap
+      for (const u of units) {
+        const tZ = (u as any).targetZ;
+        if (tZ !== undefined && u.state !== 'dead') u.z += (tZ - u.z) * alpha;
+      }
+    }
     syncUnitMeshes();
     for (const u of units) {
       u.mixer?.update(dt);
