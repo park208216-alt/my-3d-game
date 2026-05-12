@@ -561,6 +561,7 @@ interface SiegeWeapon {
   x: number;
   mesh: THREE.Group | null;
   atkTimer: number;
+  level: number; // 0~2, upgradeable twice
 }
 
 interface Projectile {
@@ -575,10 +576,19 @@ interface Projectile {
 }
 
 const SIEGE_COST = 10;
+const SIEGE_UPGRADE_COST = 6;
 const BALLISTA_RANGE = 10;
 const CATAPULT_RANGE = 10;
 const BOULDER_GRAVITY = 20;
 const BOULDER_H_SPEED = 9;
+// [level0, level1, level2]
+const BALLISTA_SCALES    = [3.0, 4.5, 6.0];
+const BALLISTA_COOLDOWNS = [0.50, 0.33, 0.20];
+const BALLISTA_DAMAGES   = [1, 2, 4];
+const CATAPULT_SCALES    = [3.0, 4.5, 6.0];
+const CATAPULT_COOLDOWNS = [5.0, 3.0, 2.0];
+const CATAPULT_DAMAGES   = [7, 12, 18];
+const CATAPULT_AOES      = [1.8, 2.5, 3.2];
 
 let p1Ballista: SiegeWeapon | null = null;
 let p1Catapult: SiegeWeapon | null = null;
@@ -642,12 +652,12 @@ function syncSiegeMeshes(state: Record<string, { x: number; z: number } | null>)
 function placeSiege(type: 'ballista' | 'catapult', side: Side) {
   const baseZ = side === 'p1' ? 2 : FIELD_LEN - 2;
   const xOffset = type === 'ballista' ? 3 : -3;
-  const weapon: SiegeWeapon = { type, side, z: baseZ, x: xOffset, mesh: null, atkTimer: 0 };
+  const weapon: SiegeWeapon = { type, side, z: baseZ, x: xOffset, mesh: null, atkTimer: 0, level: 0 };
 
   const tmpl = siegeWeaponTemplates[type];
   if (tmpl) {
     weapon.mesh = tmpl.clone(true);
-    weapon.mesh.scale.setScalar(6.0);
+    weapon.mesh.scale.setScalar(type === 'ballista' ? BALLISTA_SCALES[0] : CATAPULT_SCALES[0]);
     weapon.mesh.position.set(xOffset, 0, baseZ);
     if (side === 'p2') weapon.mesh.rotation.y = Math.PI;
     scene.add(weapon.mesh);
@@ -678,16 +688,16 @@ function stepSiegeWeapons(dt: number) {
     });
 
     if (sw.type === 'ballista') {
-      sw.atkTimer = 0.3; // atk speed 10
-      fireArrow(sw, target);
+      sw.atkTimer = BALLISTA_COOLDOWNS[sw.level];
+      fireArrow(sw, target, BALLISTA_DAMAGES[sw.level]);
     } else {
-      sw.atkTimer = 3.0; // atk speed 1
-      fireBoulder(sw, target);
+      sw.atkTimer = CATAPULT_COOLDOWNS[sw.level];
+      fireBoulder(sw, target, CATAPULT_DAMAGES[sw.level], CATAPULT_AOES[sw.level]);
     }
   }
 }
 
-function fireArrow(sw: SiegeWeapon, target: UnitSim) {
+function fireArrow(sw: SiegeWeapon, target: UnitSim, damage = 1) {
   const from = new THREE.Vector3(sw.x, 1.5, sw.z);
   const to = new THREE.Vector3(target.x, target.mesh?.position.y ?? 1, target.z);
   const dir = to.clone().sub(from).normalize();
@@ -707,11 +717,11 @@ function fireArrow(sw: SiegeWeapon, target: UnitSim) {
   projectiles.push({
     type: 'arrow', mesh, side: sw.side,
     pos: from.clone(), vel: dir.multiplyScalar(speed),
-    damage: 1, aoe: 0, done: false,
+    damage, aoe: 0, done: false,
   });
 }
 
-function fireBoulder(sw: SiegeWeapon, target: UnitSim) {
+function fireBoulder(sw: SiegeWeapon, target: UnitSim, damage = 10, aoe = 2.5) {
   const from = new THREE.Vector3(sw.x, 1.5, sw.z);
   const to = new THREE.Vector3(target.x, 0, target.z);
   const horizDist = Math.sqrt((to.x-from.x)**2 + (to.z-from.z)**2);
@@ -734,7 +744,7 @@ function fireBoulder(sw: SiegeWeapon, target: UnitSim) {
   projectiles.push({
     type: 'boulder', mesh, side: sw.side,
     pos: from.clone(), vel,
-    damage: 10, aoe: 2.5, done: false,
+    damage, aoe, done: false,
   });
 }
 
@@ -2038,23 +2048,65 @@ function stepFoodBuffs(_dt: number) {
   }
 }
 
+function upgradeSiege(type: 'ballista' | 'catapult') {
+  if (!battleActive) return;
+  const sw = localSide === 'p1'
+    ? (type === 'ballista' ? p1Ballista : p1Catapult)
+    : (type === 'ballista' ? p2Ballista : p2Catapult);
+  if (!sw || sw.level >= 2) return;
+  if (currency < SIEGE_UPGRADE_COST) return;
+  currency -= SIEGE_UPGRADE_COST;
+  sw.level++;
+  const scales = type === 'ballista' ? BALLISTA_SCALES : CATAPULT_SCALES;
+  if (sw.mesh) sw.mesh.scale.setScalar(scales[sw.level]);
+  updateHud();
+  updateSiegeButtons();
+}
+
 function updateSiegeButtons() {
   const myBallista = localSide === 'p1' ? p1Ballista : p2Ballista;
   const myCatapult = localSide === 'p1' ? p1Catapult : p2Catapult;
   const btnB = $('btn-ballista') as HTMLButtonElement;
   const btnC = $('btn-catapult') as HTMLButtonElement;
+  const btnUB = $('btn-upgrade-ballista') as HTMLButtonElement | null;
+  const btnUC = $('btn-upgrade-catapult') as HTMLButtonElement | null;
   if (!btnB || !btnC) return;
   if (myBallista) {
-    btnB.textContent = '발리스타 ✓';
+    btnB.textContent = `발리스타 Lv${myBallista.level + 1}`;
     btnB.style.opacity = '0.5'; btnB.style.cursor = 'not-allowed';
+    if (btnUB) {
+      if (myBallista.level < 2) {
+        btnUB.style.display = 'inline-block';
+        btnUB.textContent = `발리스타 강화 (${SIEGE_UPGRADE_COST})`;
+        btnUB.style.opacity = currency >= SIEGE_UPGRADE_COST ? '1' : '0.4';
+        btnUB.style.cursor = currency >= SIEGE_UPGRADE_COST ? 'pointer' : 'not-allowed';
+      } else {
+        btnUB.style.display = 'inline-block';
+        btnUB.textContent = '발리스타 MAX';
+        btnUB.style.opacity = '0.4'; btnUB.style.cursor = 'not-allowed';
+      }
+    }
   } else {
     btnB.textContent = `발리스타 (${SIEGE_COST})`;
     btnB.style.opacity = currency >= SIEGE_COST ? '1' : '0.4';
     btnB.style.cursor = currency >= SIEGE_COST ? 'pointer' : 'not-allowed';
+    if (btnUB) btnUB.style.display = 'none';
   }
   if (myCatapult) {
-    btnC.textContent = '박격포 ✓';
+    btnC.textContent = `박격포 Lv${myCatapult.level + 1}`;
     btnC.style.opacity = '0.5'; btnC.style.cursor = 'not-allowed';
+    if (btnUC) {
+      if (myCatapult.level < 2) {
+        btnUC.style.display = 'inline-block';
+        btnUC.textContent = `박격포 강화 (${SIEGE_UPGRADE_COST})`;
+        btnUC.style.opacity = currency >= SIEGE_UPGRADE_COST ? '1' : '0.4';
+        btnUC.style.cursor = currency >= SIEGE_UPGRADE_COST ? 'pointer' : 'not-allowed';
+      } else {
+        btnUC.style.display = 'inline-block';
+        btnUC.textContent = '박격포 MAX';
+        btnUC.style.opacity = '0.4'; btnUC.style.cursor = 'not-allowed';
+      }
+    }
   } else {
     btnC.textContent = `박격포 (${SIEGE_COST})`;
     btnC.style.opacity = currency >= SIEGE_COST ? '1' : '0.4';
@@ -3216,7 +3268,9 @@ document.body.insertAdjacentHTML('beforeend', `
       <span id="upgrade-info" style="font-size:10px;opacity:0.7;white-space:nowrap;min-width:40px;text-align:right;"></span>
       <button id="btn-heal-base" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(80,255,120,0.4);background:rgba(80,255,120,0.1);color:#a0ffb8;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap;">회복 (3재화)</button>
       <button id="btn-ballista" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(100,200,255,0.4);background:rgba(100,200,255,0.1);color:#aae4ff;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap;">발리스타 (10)</button>
+      <button id="btn-upgrade-ballista" style="display:none;padding:5px 8px;border-radius:8px;border:1px solid rgba(100,200,255,0.4);background:rgba(100,200,255,0.08);color:#aae4ff;font-weight:700;cursor:pointer;font-size:11px;white-space:nowrap;">발리스타 강화 (6)</button>
       <button id="btn-catapult" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.1);color:#ffc888;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap;">박격포 (10)</button>
+      <button id="btn-upgrade-catapult" style="display:none;padding:5px 8px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.08);color:#ffc888;font-weight:700;cursor:pointer;font-size:11px;white-space:nowrap;">박격포 강화 (6)</button>
     </div>
   </div>
   <!-- Right: word quiz -->
@@ -3641,6 +3695,8 @@ function playerUseFood(foodId: string) {
 ($('btn-upgrade') as HTMLButtonElement).addEventListener('click', upgradeBase);
 ($('btn-ballista') as HTMLButtonElement).addEventListener('click', () => buySiege('ballista'));
 ($('btn-catapult') as HTMLButtonElement).addEventListener('click', () => buySiege('catapult'));
+($('btn-upgrade-ballista') as HTMLButtonElement).addEventListener('click', () => upgradeSiege('ballista'));
+($('btn-upgrade-catapult') as HTMLButtonElement).addEventListener('click', () => upgradeSiege('catapult'));
 ($('btn-heal-base') as HTMLButtonElement).addEventListener('click', () => {
   if (!battleActive) return;
   if (currency < BASE_HEAL_COST) return;

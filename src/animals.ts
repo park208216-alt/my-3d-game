@@ -195,7 +195,7 @@ export const ANIMAL_IDS = [
   'elephant',
 ];
 
-export const BASE_HP = 60;
+export const BASE_HP = 100;
 export const BASE_HP_1P_ENEMY = 500;
 
 export const FIELD_LEN = 45;
