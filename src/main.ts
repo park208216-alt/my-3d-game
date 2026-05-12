@@ -2788,8 +2788,8 @@ function stepUnits(dt: number) {
     }
 
     // Hard clamp: units cannot penetrate past the enemy base
-    // Use unit's own range so short-range units (hog, chick, etc.) still reach attack distance
-    const BASE_STOP_DIST = Math.max(def.range, 1.0);
+    // Base is BoxGeometry(3,0.4,3) → half-depth 1.5; clamp at max(range, 1.5) so no unit enters the mesh
+    const BASE_STOP_DIST = Math.max(def.range, 1.5);
     if (dir > 0) {
       if (u.z > targetBase.z - BASE_STOP_DIST) { u.z = targetBase.z - BASE_STOP_DIST; if (u.mesh) u.mesh.position.z = u.z; }
     } else {
@@ -2857,7 +2857,7 @@ function stepGroundOrAir(u: UnitSim, dt: number, dir: number, def: AnimalDef, en
     if (u.atkTimer <= 0) { dealDamageAOE(u, closest, def, attackable, now); u.atkTimer = effAtkCooldown(u, def); sfx('attack'); }
     return;
   }
-  if (baseDist <= def.range) {
+  if (baseDist <= Math.max(def.range, 1.5)) {
     u.state = 'attacking';
     if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - effAtk(u, def)); u.atkTimer = effAtkCooldown(u, def); sfx('base_hit'); }
     return;
@@ -2888,7 +2888,7 @@ function stepMole(u: UnitSim, dt: number, dir: number, enemies: UnitSim[], base:
     if (u.atkTimer <= 0) { dealDamage(u, nearest, def.atk, now); u.atkTimer = def.atkCooldown; }
     return;
   }
-  if (baseDist <= def.range) {
+  if (baseDist <= Math.max(def.range, 1.5)) {
     u.state = 'attacking';
     if (u.atkTimer <= 0) { base.hp = Math.max(0, base.hp - def.atk); u.atkTimer = def.atkCooldown; sfx('base_hit'); }
     return;
@@ -5007,7 +5007,16 @@ function animate() {
 
     if (gameMode === '1p' && !quizEventActive) stepUnits(dt);
     syncUnitMeshes();
-    for (const u of units) u.mixer?.update(dt);
+    for (const u of units) {
+      u.mixer?.update(dt);
+      // Re-lock boss mesh transform — FBX root-motion animations override position/rotation
+      if (BOSS_DEFS[u.animalId] && u.mesh) {
+        u.mesh.position.set(u.x, 0, u.z);
+        u.mesh.rotation.x = 0;
+        u.mesh.rotation.z = 0;
+        u.mesh.rotation.y = Math.PI;
+      }
+    }
     if (gameMode === '1p' && !quizEventActive) stepSiegeWeapons(dt);
     stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
     if (gameMode === '1p') {
