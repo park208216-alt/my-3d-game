@@ -594,11 +594,11 @@ function placeBaseTowers() {
 function updateCannonMesh() {
   if (p1CannonMesh) { scene.remove(p1CannonMesh); p1CannonMesh = null; }
   if (p1CannonLevel > 0 && p1TowerMesh) {
-    const geo = new THREE.CylinderGeometry(0.3, 0.3, 1.5, 8);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.6, metalness: 0.5 });
+    const geo = new THREE.CylinderGeometry(0.5, 0.6, 2.8, 8);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0x444444, emissiveIntensity: 0.5, roughness: 0.3, metalness: 0.9 });
     p1CannonMesh = new THREE.Mesh(geo, mat);
     p1CannonMesh.rotation.x = Math.PI / 2; // point forward
-    p1CannonMesh.position.set(0, 5.5, 2);  // above p1 tower
+    p1CannonMesh.position.set(0, 8.5, 2);  // above p1 tower top
     p1CannonMesh.castShadow = true;
     scene.add(p1CannonMesh);
   }
@@ -853,13 +853,13 @@ function stepProjectiles(dt: number) {
       for (const e of enemies) {
         const uid = e.id;
         if (p.hitEnemies.has(uid)) continue;
-        if (Math.abs(e.x - p.pos.x) < 1.0 && Math.abs(e.z - p.pos.z) < 1.5) {
+        if (Math.sqrt((e.x - p.pos.x) ** 2 + (e.z - p.pos.z) ** 2) < 1.5) {
           p.hitEnemies.add(uid);
           e.hp = Math.max(0, e.hp - p.damage);
           if (e.hp <= 0) e.state = 'dead';
         }
       }
-      if (p.pos.z > FIELD_LEN) p.done = true;
+      if (p.pos.z > FIELD_LEN || p.pos.z < -5 || Math.abs(p.pos.x) > 20) p.done = true;
     }
 
     // Boulder: hits ground or air unit
@@ -912,9 +912,12 @@ function stepCannon(dt: number) {
   const enemies = units.filter(e => e.side === 'p2' && e.state !== 'dead' && e.state !== 'underground');
   if (enemies.length === 0) return;
 
-  // Fire a piercing cannonball
+  // Fire a piercing cannonball toward furthest enemy
+  const target = enemies.reduce((a, b) => b.z > a.z ? b : a);
   const startPos = new THREE.Vector3(0, 3.0, 2);
-  const vel = new THREE.Vector3(0, 0, 15); // fast horizontal shot toward p2
+  const targetPos = new THREE.Vector3(target.x, 1.0, target.z);
+  const vel = targetPos.clone().sub(startPos).normalize().multiplyScalar(18);
+  if (p1CannonMesh) p1CannonMesh.lookAt(targetPos);
 
   const geo = new THREE.SphereGeometry(stats.bulletRadius, 8, 8);
   const mat = new THREE.MeshStandardMaterial({ color: 0x333333, emissive: 0xff6600, emissiveIntensity: 0.8 });
