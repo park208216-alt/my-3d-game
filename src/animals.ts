@@ -196,7 +196,7 @@ export const ANIMAL_IDS = [
 ];
 
 export const BASE_HP = 100;
-export const BASE_HP_1P_ENEMY = 500;
+export const BASE_HP_1P_ENEMY = 1000;
 
 export const FIELD_LEN = 45;
 export const SPAWN_P1 = 4.0;

@@ -95,35 +95,74 @@ interface BossDef {
 }
 
 const BOSS_DEFS: Record<string, BossDef> = {
+  // ── 중간 보스 (boss2) — 적 기지 HP 900→500 구간 ──
+  b2_wasp: {
+    id: 'b2_wasp', name: '말벌', file: 'Wasp.fbx',
+    hp: 30, atk: 6, spd: 5, atkCooldown: 0.5, range: 2,
+    modelScale: 0.0120, collisionSize: 0.8,
+    animWalk: 'Walk', animAtk: 'Attack',
+  },
+  b2_frog: {
+    id: 'b2_frog', name: '개구리', file: 'Frog.fbx',
+    hp: 50, atk: 9, spd: 4, atkCooldown: 0.75, range: 1,
+    modelScale: 0.0130, collisionSize: 0.9,
+    animWalk: 'Walk', animAtk: 'Attack',
+  },
+  b2_rat: {
+    id: 'b2_rat', name: '쥐', file: 'Rat.fbx',
+    hp: 45, atk: 8, spd: 6, atkCooldown: 0.5, range: 1,
+    modelScale: 0.0110, collisionSize: 0.8,
+    animWalk: 'Walk', animAtk: 'Attack',
+  },
+  b2_spider: {
+    id: 'b2_spider', name: '거미', file: 'Spider.fbx',
+    hp: 65, atk: 11, spd: 2, atkCooldown: 1.0, range: 2,
+    modelScale: 0.0130, collisionSize: 1.0,
+    animWalk: 'Walk', animAtk: 'Attack',
+  },
+  b2_snake: {
+    id: 'b2_snake', name: '독사', file: 'Snake_angry.fbx',
+    hp: 80, atk: 13, spd: 3, atkCooldown: 0.75, range: 3,
+    modelScale: 0.0120, collisionSize: 1.0,
+    animWalk: 'Walk', animAtk: 'Attack',
+  },
+  // ── 메인 보스 (boss) — 적 기지 HP 400→100 구간, 강화됨 ──
   slime: {
     id: 'slime', name: '슬라임', file: 'Slime.fbx',
-    hp: 25, atk: 5, spd: 4, atkCooldown: 3/4, range: 2,
+    hp: 60, atk: 10, spd: 5, atkCooldown: 0.6, range: 2,
     modelScale: 0.0138, collisionSize: 1.0,
     animWalk: 'Slime_Walk', animAtk: 'Slime_Attack',
   },
   bat: {
     id: 'bat', name: '박쥐', file: 'Bat.fbx',
-    hp: 50, atk: 10, spd: 3, atkCooldown: 3/3, range: 3,
+    hp: 120, atk: 18, spd: 4, atkCooldown: 0.8, range: 3,
     modelScale: 0.0083, collisionSize: 1.5,
     animWalk: 'Bat_Flying', animAtk: 'Bat_Attack',
   },
   skeleton: {
     id: 'skeleton', name: '해골', file: 'Skeleton.fbx',
-    hp: 100, atk: 15, spd: 2, atkCooldown: 3/2, range: 3,
+    hp: 250, atk: 25, spd: 3, atkCooldown: 1.0, range: 3,
     modelScale: 0.0101, collisionSize: 2.0,
     animWalk: 'Skeleton_Running', animAtk: 'Skeleton_Attack',
   },
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
-    hp: 200, atk: 20, spd: 1, atkCooldown: 3/1, range: 10,
-    modelScale: 0.0170, collisionSize: 3.0, // 고정 6유닛 (FBX 원본 353.95 × 0.0170 ≈ 6)
-    aoe: 3,
-    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack', // Attack2 아님, 고정
+    hp: 500, atk: 40, spd: 2, atkCooldown: 2.5, range: 10,
+    modelScale: 0.0170, collisionSize: 3.0,
+    aoe: 4,
+    animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
 };
 
 // HP threshold → boss id (p2 base hp drops TO or BELOW this)
 const BOSS_THRESHOLDS: { hp: number; bossId: string }[] = [
+  // 중간 보스 (적 기지 1000→500 구간)
+  { hp: 900, bossId: 'b2_wasp' },
+  { hp: 800, bossId: 'b2_frog' },
+  { hp: 700, bossId: 'b2_rat' },
+  { hp: 600, bossId: 'b2_spider' },
+  { hp: 500, bossId: 'b2_snake' },
+  // 메인 보스 (적 기지 400→100 구간)
   { hp: 400, bossId: 'slime' },
   { hp: 300, bossId: 'bat' },
   { hp: 200, bossId: 'skeleton' },
@@ -131,6 +170,7 @@ const BOSS_THRESHOLDS: { hp: number; bossId: string }[] = [
 ];
 
 const bossTemplates: Record<string, THREE.Group | null> = {
+  b2_wasp: null, b2_frog: null, b2_rat: null, b2_spider: null, b2_snake: null,
   slime: null, bat: null, skeleton: null, dragon: null,
 };
 let bossTemplatesLoading = false;
@@ -221,23 +261,27 @@ function updateBossSpawnEffects(dt: number) {
 function loadBossModels(): Promise<void> {
   if (bossTemplatesLoading) return Promise.resolve();
   bossTemplatesLoading = true;
-  const bossBase = `${import.meta.env.BASE_URL}boss/`;
-  console.log('[Boss] loading FBX from base:', bossBase);
+  const bossBase  = `${import.meta.env.BASE_URL}boss/`;
+  const boss2Base = `${import.meta.env.BASE_URL}boss2/FBX/`;
   const loader = new FBXLoader();
-  const tasks = Object.values(BOSS_DEFS).map(def =>
+
+  const loadOne = (id: string, file: string, base: string) =>
     new Promise<void>(resolve => {
-      loader.load(`${bossBase}${def.file}`, (fbx) => {
-        bossTemplates[def.id] = fbx;
-        const box = new THREE.Box3().setFromObject(fbx);
-        const sz = box.getSize(new THREE.Vector3());
-        console.log(`[Boss] loaded ${def.file} | size at scale 1:`, sz.x.toFixed(2), sz.y.toFixed(2), sz.z.toFixed(2), '| animations:', fbx.animations.map(a => a.name));
+      loader.load(`${base}${file}`, (fbx) => {
+        bossTemplates[id] = fbx;
+        const sz = new THREE.Box3().setFromObject(fbx).getSize(new THREE.Vector3());
+        console.log(`[Boss] ${file} | size:`, sz.x.toFixed(1), sz.y.toFixed(1), sz.z.toFixed(1), '| anims:', fbx.animations.map(a => a.name));
         resolve();
       }, undefined, (err) => {
-        console.error(`[Boss] FAILED to load ${def.file}:`, err);
+        console.error(`[Boss] FAILED ${file}:`, err);
         resolve();
       });
-    })
-  );
+    });
+
+  const tasks = Object.values(BOSS_DEFS).map(def => {
+    const base = def.id.startsWith('b2_') ? boss2Base : bossBase;
+    return loadOne(def.id, def.file, base);
+  });
   return Promise.all(tasks).then(() => { console.log('[Boss] all models loaded'); });
 }
 
@@ -325,7 +369,10 @@ function findClip(clips: THREE.AnimationClip[], name: string): THREE.AnimationCl
 let bossSpawned: Record<string, boolean> = {};
 
 function resetBossSpawned() {
-  bossSpawned = { slime: false, bat: false, skeleton: false, dragon: false };
+  bossSpawned = {
+    b2_wasp: false, b2_frog: false, b2_rat: false, b2_spider: false, b2_snake: false,
+    slime: false, bat: false, skeleton: false, dragon: false,
+  };
 }
 
 function spawnBoss(bossId: string): void {
@@ -373,7 +420,8 @@ function spawnBoss(bossId: string): void {
   scene.add(hpSprite);
 
   // "보스" label above HP bar
-  const bossLabel = makeTextSprite(`👑 ${def.name} 보스`, '#ffdd00', 2.5);
+  const isMidBoss = bossId.startsWith('b2_');
+  const bossLabel = makeTextSprite(isMidBoss ? `⚠ ${def.name}` : `👑 ${def.name} 보스`, isMidBoss ? '#ff8844' : '#ffdd00', 2.5);
   bossLabel.position.set(x, def.collisionSize + 2.4, z);
   scene.add(bossLabel);
 
