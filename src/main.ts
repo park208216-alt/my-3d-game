@@ -2685,6 +2685,14 @@ function stepUnits(dt: number) {
     } else {
       stepGroundOrAir(u, dt, dir, def, enemies, targetBase, now);
     }
+
+    // Hard clamp: units cannot penetrate past the enemy base
+    const BASE_STOP_DIST = 2.5;
+    if (dir > 0) {
+      if (u.z > targetBase.z - BASE_STOP_DIST) { u.z = targetBase.z - BASE_STOP_DIST; if (u.mesh) u.mesh.position.z = u.z; }
+    } else {
+      if (u.z < targetBase.z + BASE_STOP_DIST) { u.z = targetBase.z + BASE_STOP_DIST; if (u.mesh) u.mesh.position.z = u.z; }
+    }
   }
 }
 
