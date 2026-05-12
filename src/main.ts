@@ -100,31 +100,31 @@ const BOSS_DEFS: Record<string, BossDef> = {
     id: 'b2_wasp', name: '말벌', file: 'Wasp.fbx',
     hp: 30, atk: 6, spd: 5, atkCooldown: 0.5, range: 2,
     modelScale: 0.0120, collisionSize: 0.8,
-    animWalk: 'Walk', animAtk: 'Attack',
+    animWalk: 'Wasp_Flying', animAtk: 'Wasp_Attack',
   },
   b2_frog: {
     id: 'b2_frog', name: '개구리', file: 'Frog.fbx',
     hp: 50, atk: 9, spd: 4, atkCooldown: 0.75, range: 1,
     modelScale: 0.0130, collisionSize: 0.9,
-    animWalk: 'Walk', animAtk: 'Attack',
+    animWalk: 'Frog_Jump', animAtk: 'Frog_Attack',
   },
   b2_rat: {
     id: 'b2_rat', name: '쥐', file: 'Rat.fbx',
     hp: 45, atk: 8, spd: 6, atkCooldown: 0.5, range: 1,
     modelScale: 0.0110, collisionSize: 0.8,
-    animWalk: 'Walk', animAtk: 'Attack',
+    animWalk: 'Rat_Walk', animAtk: 'Rat_Attack',
   },
   b2_spider: {
     id: 'b2_spider', name: '거미', file: 'Spider.fbx',
     hp: 65, atk: 11, spd: 2, atkCooldown: 1.0, range: 2,
     modelScale: 0.0130, collisionSize: 1.0,
-    animWalk: 'Walk', animAtk: 'Attack',
+    animWalk: 'Spider_Walk', animAtk: 'Spider_Attack',
   },
   b2_snake: {
     id: 'b2_snake', name: '독사', file: 'Snake_angry.fbx',
     hp: 80, atk: 13, spd: 3, atkCooldown: 0.75, range: 3,
     modelScale: 0.0120, collisionSize: 1.0,
-    animWalk: 'Walk', animAtk: 'Attack',
+    animWalk: 'Snake_Walk', animAtk: 'Snake_Attack',
   },
   // ── 메인 보스 (boss) — 적 기지 HP 400→100 구간, 강화됨 ──
   slime: {
@@ -2788,7 +2788,8 @@ function stepUnits(dt: number) {
     }
 
     // Hard clamp: units cannot penetrate past the enemy base
-    const BASE_STOP_DIST = 2.5;
+    // Use unit's own range so short-range units (hog, chick, etc.) still reach attack distance
+    const BASE_STOP_DIST = Math.max(def.range, 1.0);
     if (dir > 0) {
       if (u.z > targetBase.z - BASE_STOP_DIST) { u.z = targetBase.z - BASE_STOP_DIST; if (u.mesh) u.mesh.position.z = u.z; }
     } else {
