@@ -7,7 +7,7 @@ import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
 import { FOODS, FOOD_IDS, isFoodId } from './foods';
-import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard } from './supabase';
+import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, ALL_ANIMALS, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard } from './supabase';
 import type { UserProfile, LeaderboardEntry } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
@@ -623,7 +623,7 @@ function buySiege(type: 'ballista' | 'catapult') {
     : (type === 'ballista' ? p2Ballista : p2Catapult);
   if (mySiege) return;
   if (currency < SIEGE_COST) return;
-  currency -= SIEGE_COST;
+  spendCurrency(SIEGE_COST);
   if (gameMode === '1p') {
     placeSiege(type, localSide);
   } else {
@@ -2055,7 +2055,7 @@ function upgradeSiege(type: 'ballista' | 'catapult') {
     : (type === 'ballista' ? p2Ballista : p2Catapult);
   if (!sw || sw.level >= 2) return;
   if (currency < SIEGE_UPGRADE_COST) return;
-  currency -= SIEGE_UPGRADE_COST;
+  spendCurrency(SIEGE_UPGRADE_COST);
   sw.level++;
   const scales = type === 'ballista' ? BALLISTA_SCALES : CATAPULT_SCALES;
   if (sw.mesh) sw.mesh.scale.setScalar(scales[sw.level]);
@@ -2137,6 +2137,7 @@ type GameMode = '1p' | '2p';
 type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'lobby2p' | 'battle' | 'result' | 'leaderboard';
 let loggedInUsername = '';
 let loggedInUserId = '';
+let isAdmin = false;
 let playerGold = 0;
 let guestNickname = localStorage.getItem('zoo_nickname') || '';
 let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
@@ -3389,7 +3390,9 @@ function showScreen(s: Screen) {
 }
 
 function updateHomeDisplay() {
-  ($('home-username') as HTMLElement).textContent = loggedInUsername || 'Guest';
+  const nameEl = $('home-username') as HTMLElement;
+  nameEl.textContent = loggedInUsername || 'Guest';
+  if (isAdmin) nameEl.textContent += ' [관리자]';
   ($('home-gold') as HTMLElement).textContent = `${playerGold} G`;
 }
 
@@ -3409,8 +3412,8 @@ function buildDeckCards() {
   const container = $('deck-cards');
   container.innerHTML = '';
 
-  const ownedAnimalIds = ANIMAL_IDS.filter(id => playerOwnedAnimals.includes(id));
-  const ownedFoodIds   = FOOD_IDS.filter(id => playerOwnedAnimals.includes(id));
+  const ownedAnimalIds = isAdmin ? [...ANIMAL_IDS] : ANIMAL_IDS.filter(id => playerOwnedAnimals.includes(id));
+  const ownedFoodIds   = isAdmin ? [...FOOD_IDS]   : FOOD_IDS.filter(id => playerOwnedAnimals.includes(id));
 
   if (ownedAnimalIds.length === 0 && ownedFoodIds.length === 0) {
     container.innerHTML = `<div style="grid-column:1/-1;text-align:center;opacity:0.55;padding:32px 0;font-size:14px;">
@@ -3472,9 +3475,9 @@ function buildDeckCards() {
     }
   }
 
-  // Unowned items section
+  // Unowned items section (hidden for admin)
   const allIds = [...ANIMAL_IDS, ...FOOD_IDS];
-  const unownedIds = allIds.filter(id => !playerOwnedAnimals.includes(id));
+  const unownedIds = isAdmin ? [] : allIds.filter(id => !playerOwnedAnimals.includes(id));
   if (unownedIds.length > 0) {
     const hdr = document.createElement('div');
     hdr.style.cssText = 'grid-column:1/-1;font-size:12px;font-weight:700;color:#888;letter-spacing:1px;margin-top:14px;border-top:1px solid rgba(255,255,255,0.1);padding-top:10px;';
@@ -3522,6 +3525,18 @@ function toggleDeckCard(id: string) {
 
 function refreshDeckCards() {
   const container = $('deck-cards');
+  if (isAdmin) {
+    // Admin: all cards always active, show special label
+    for (const card of Array.from(container.children) as HTMLElement[]) {
+      if (!card.dataset.id) continue;
+      card.style.borderColor = 'rgba(255,200,80,0.6)';
+      card.style.background = 'rgba(255,200,80,0.08)';
+      card.style.opacity = '1';
+      card.style.cursor = 'default';
+    }
+    $('deck-count').textContent = '관리자 모드 (전체 카드 사용 가능)';
+    return;
+  }
   const atMax = playerDeck.length >= DECK_MAX;
   for (const card of Array.from(container.children) as HTMLElement[]) {
     const id = card.dataset.id!;
@@ -3546,7 +3561,9 @@ function buildSummonButtons() {
   const grid = $('summon-grid');
   grid.innerHTML = '';
   summonBtns.length = 0;
-  const deck = playerDeck.length > 0 ? playerDeck : ANIMAL_IDS.slice(0, DECK_MAX);
+  const deck = isAdmin
+    ? [...ANIMAL_IDS, ...FOOD_IDS]
+    : (playerDeck.length > 0 ? playerDeck : ANIMAL_IDS.slice(0, DECK_MAX));
   const hotkeys = ['Q','W','E','A','S','D'];
   for (let i = 0; i < deck.length; i++) {
     const id = deck[i];
@@ -3642,7 +3659,7 @@ function upgradeBase() {
   if (myLevel >= 2) return;
   const cost = UPGRADE_COSTS[myLevel];
   if (currency < cost) return;
-  currency -= cost;
+  spendCurrency(cost);
   if (gameMode === '1p') {
     p1TowerLevel++;
     sfx('upgrade');
@@ -3662,7 +3679,7 @@ function playerSummon(animalId: string) {
   if (!battleActive) return;
   const cost = ANIMALS[animalId].cost;
   if (currency < cost) return;
-  currency -= cost;
+  spendCurrency(cost);
   updateHud();
   if (gameMode === '1p') {
     const count = ANIMALS[animalId].groupSpawn ?? 1;
@@ -3681,7 +3698,7 @@ function playerUseFood(foodId: string) {
   if (currency < def.cost) return;
   // Broccoli is unique: only one barrier allowed at a time
   if (def.effect === 'broccoli_barrier' && broccoliActive(localSide)) return;
-  currency -= def.cost;
+  spendCurrency(def.cost);
   updateHud();
   if (gameMode === '1p') {
     triggerFoodEffect(foodId, localSide);
@@ -3703,7 +3720,7 @@ function playerUseFood(foodId: string) {
   const myBase = localSide === 'p1' ? p1Base : p2Base;
   if (!myBase) return;
   if (myBase.hp >= myBase.maxHp) { showQuizMsg('기지 체력이 이미 최대입니다'); return; }
-  currency -= BASE_HEAL_COST;
+  spendCurrency(BASE_HEAL_COST);
   myBase.hp = Math.min(myBase.maxHp, myBase.hp + BASE_HEAL_AMOUNT);
   myBase.lastHp = -1; // force HP bar redraw
   updateHud();
@@ -3753,7 +3770,7 @@ async function startBattle() {
   clearBattle();
   battleActive = true;
   battleClock = 0;
-  currency = 0;
+  currency = isAdmin ? CURRENCY_MAX : 0;
   autoCurrencyTimer = 0;
   quizEventTriggerTimer = 60;
   quizEventActive = false;
@@ -4206,8 +4223,17 @@ function showQuizMsg(msg: string) {
   quizMsgTimer = 1.5;
 }
 
+function spendCurrency(amt: number) {
+  if (isAdmin) return; // admin: free
+  currency -= amt;
+}
+
 function addCurrency(amt: number) {
-  currency = Math.max(0, Math.min(CURRENCY_MAX, currency + amt));
+  if (isAdmin) {
+    currency = CURRENCY_MAX;
+  } else {
+    currency = Math.max(0, Math.min(CURRENCY_MAX, currency + amt));
+  }
   updateHud();
   if (gameMode === '2p' && amt > 0 && battleActive) {
     socket.emit('currencyEarn', { amount: amt });
@@ -4846,12 +4872,21 @@ function animate() {
 async function applyProfile(username: string, userId: string, profile: UserProfile) {
   loggedInUsername = username;
   loggedInUserId = userId;
+  isAdmin = (username === 'manager');
+  console.log('[Auth] applyProfile', username, 'isAdmin=', isAdmin);
   playerGold = profile.gold;
-  playerDeck = profile.deck.length ? profile.deck : [...DEFAULT_DECK];
-  playerOwnedAnimals = profile.owned_animals.length ? profile.owned_animals : [...DEFAULT_DECK];
-  // Sanitize deck: remove any item no longer owned
-  playerDeck = playerDeck.filter(id => playerOwnedAnimals.includes(id));
-  if (playerDeck.length === 0) playerDeck = [...DEFAULT_DECK].filter(id => playerOwnedAnimals.includes(id));
+  if (isAdmin) {
+    // Admin: owns everything, deck = all items
+    playerOwnedAnimals = [...ALL_ANIMALS];
+    playerDeck = [...ANIMAL_IDS, ...FOOD_IDS];
+    console.log('[Admin] all cards unlocked, deck size=', playerDeck.length);
+  } else {
+    playerDeck = profile.deck.length ? profile.deck : [...DEFAULT_DECK];
+    playerOwnedAnimals = profile.owned_animals.length ? profile.owned_animals : [...DEFAULT_DECK];
+    // Sanitize deck: remove any item no longer owned
+    playerDeck = playerDeck.filter(id => playerOwnedAnimals.includes(id));
+    if (playerDeck.length === 0) playerDeck = [...DEFAULT_DECK].filter(id => playerOwnedAnimals.includes(id));
+  }
   updateHomeDisplay();
   showScreen('home');
 }
@@ -4863,12 +4898,19 @@ async function handleLogin() {
   if (!id || !pw) { errEl.textContent = '아이디와 비밀번호를 입력하세요'; return; }
   errEl.textContent = '';
   ($('btn-login') as HTMLButtonElement).disabled = true;
-  const { data, error } = await supabase.auth.signInWithPassword({ email: toEmail(id), password: pw });
+  let signInResult = await supabase.auth.signInWithPassword({ email: toEmail(id), password: pw });
+  // Auto-create admin account on first use
+  if ((signInResult.error || !signInResult.data.user) && id === 'manager') {
+    const signUpResult = await supabase.auth.signUp({ email: toEmail(id), password: pw });
+    if (!signUpResult.error && signUpResult.data.user) {
+      signInResult = await supabase.auth.signInWithPassword({ email: toEmail(id), password: pw });
+    }
+  }
   ($('btn-login') as HTMLButtonElement).disabled = false;
-  if (error || !data.user) { errEl.textContent = '아이디 또는 비밀번호가 틀렸습니다'; return; }
+  if (signInResult.error || !signInResult.data.user) { errEl.textContent = '아이디 또는 비밀번호가 틀렸습니다'; return; }
   showScreen('loading');
-  const profile = await ensureProfile(data.user.id);
-  await applyProfile(id, data.user.id, profile);
+  const profile = await ensureProfile(signInResult.data.user.id);
+  await applyProfile(id, signInResult.data.user.id, profile);
 }
 
 async function handleSignupConfirm() {
