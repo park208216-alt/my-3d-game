@@ -2163,7 +2163,14 @@ function updateSiegeButtons() {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const CURRENCY_MAX = 15;
+const CURRENCY_MAX_HARD = 24; // absolute max (for slot init)
+function getCurrencyMax(): number {
+  const wc = correctWords.length;
+  if (wc >= 100) return 24;
+  if (wc >= 75)  return 21;
+  if (wc >= 50)  return 18;
+  return 15;
+}
 const CURRENCY_AUTO_INTERVAL = 2; // seconds
 const CURRENCY_MC = 1;   // multiple-choice correct
 const CURRENCY_TYPE = 3; // typing correct
@@ -3416,7 +3423,8 @@ document.body.insertAdjacentHTML('beforeend', `
 <div id="panel-battle" style="position:fixed;bottom:0;left:0;right:0;height:50vh;display:none;z-index:10;background:rgba(8,14,30,0.92);border-top:2px solid rgba(255,255,255,0.12);">
   <!-- HUD top bar -->
   <div id="battle-hud" style="position:absolute;top:0;left:0;right:0;height:32px;background:rgba(0,0,0,0.4);display:flex;align-items:center;padding:0 12px;gap:16px;font-size:13px;">
-    <span id="hud-currency">재화: 0 / 10</span>
+    <span id="hud-currency">재화: 0 / 15</span>
+    <span id="hud-words" style="color:#a0ffb8;font-size:11px;"></span>
     <span id="hud-round" style="color:#adf;"></span>
     <span id="hud-timer" style="color:#fda;"></span>
     <span id="hud-base" style="color:#fca;margin-left:auto;"></span>
@@ -3444,6 +3452,7 @@ document.body.insertAdjacentHTML('beforeend', `
       <input id="type-input" placeholder="한글 뜻 입력 후 Enter" style="display:none;flex:1;padding:6px 10px;border-radius:8px;border:1px solid rgba(120,200,255,0.6);background:rgba(10,20,40,0.8);color:#fff;font-size:13px;outline:none;">
     </div>
     <div id="quiz-msg" style="font-size:12px;color:#ff9b9b;min-height:16px;text-align:center;"></div>
+    <div id="word-log" style="overflow-y:auto;max-height:68px;display:flex;flex-direction:column-reverse;gap:1px;border-top:1px solid rgba(255,255,255,0.08);padding-top:4px;"></div>
   </div>
 </div>
 `);
@@ -3901,6 +3910,7 @@ function clearBattle() {
   p1DragonKilled = false;
   correctWords = [];
   wrongWords = 0;
+  const wlog = $('word-log'); if (wlog) wlog.innerHTML = '';
   spamWrongLog = [];
   spamLockUntil = 0;
   if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
@@ -3931,7 +3941,7 @@ async function startBattle() {
   clearBattle();
   battleActive = true;
   battleClock = 0;
-  currency = isAdmin ? CURRENCY_MAX : 0;
+  currency = isAdmin ? getCurrencyMax() : 0;
   autoCurrencyTimer = 0;
   quizEventTriggerTimer = 60;
   quizEventActive = false;
@@ -4079,7 +4089,7 @@ async function loadLeaderboard(tab: 'words' | 'clear') {
 const currencySlotEls: HTMLElement[] = [];
 (function initCurrencySlots() {
   const container = $('currency-slots');
-  for (let i = 0; i < CURRENCY_MAX; i++) {
+  for (let i = 0; i < CURRENCY_MAX_HARD; i++) {
     const slot = document.createElement('div');
     slot.style.cssText = 'flex:1;height:10px;border-radius:3px;background:#1a1a2e;border:1px solid rgba(255,215,0,0.2);transition:background 0.08s,transform 0.08s;';
     container.appendChild(slot);
@@ -4089,16 +4099,24 @@ const currencySlotEls: HTMLElement[] = [];
 
 // ─── HUD ──────────────────────────────────────────────────────────────────────
 function updateHud() {
-  $('hud-currency').textContent = `재화: ${currency} / ${CURRENCY_MAX}`;
-  // Currency slot bar
-  for (let i = 0; i < CURRENCY_MAX; i++) {
-    const filled = i < currency;
+  const cmax = getCurrencyMax();
+  $('hud-currency').textContent = `재화: ${currency} / ${cmax}`;
+  // Currency slot bar — show only up to cmax, hide rest
+  for (let i = 0; i < CURRENCY_MAX_HARD; i++) {
+    const active = i < cmax;
+    const filled = active && i < currency;
+    currencySlotEls[i].style.display = active ? '' : 'none';
     currencySlotEls[i].style.background = filled ? 'linear-gradient(180deg,#ffe066,#f5a800)' : '#1a1a2e';
     currencySlotEls[i].style.borderColor = filled ? 'rgba(255,215,0,0.7)' : 'rgba(255,215,0,0.2)';
     currencySlotEls[i].style.transform = filled ? 'scaleY(1.15)' : 'scaleY(1)';
     currencySlotEls[i].style.boxShadow = filled ? '0 0 4px rgba(255,200,0,0.5)' : 'none';
   }
-  $('currency-count').textContent = `${currency}/${CURRENCY_MAX}`;
+  $('currency-count').textContent = `${currency}/${cmax}`;
+  // Word counter
+  const wc = correctWords.length;
+  const next = wc < 50 ? 50 : wc < 75 ? 75 : wc < 100 ? 100 : null;
+  const wordEl = $('hud-words');
+  if (wordEl) wordEl.textContent = next ? `단어 ${wc}개 (${next}개→재화+3)` : `단어 ${wc}개 (MAX)`;
   updateSummonButtons();
   updateUpgradeButton();
   updateSiegeButtons();
@@ -4302,12 +4320,31 @@ function renderQuiz() {
   }
 }
 
+function addWordLog(en: string, ko: string) {
+  const prevMax = getCurrencyMax();
+  correctWords.push({ en, ko });
+  const newMax = getCurrencyMax();
+  // Add row to in-battle word log
+  const log = $('word-log');
+  if (log) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;font-size:11px;padding:1px 0;';
+    row.innerHTML = `<span style="color:#a8e6ff;font-weight:700;min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${en}</span><span style="opacity:0.75;">${ko}</span>`;
+    log.prepend(row);
+  }
+  // Notify if max currency increased
+  if (newMax > prevMax) {
+    showQuizMsg(`최대 재화 ${prevMax} → ${newMax} 증가!`);
+    quizMsgTimer = 2.5;
+  }
+}
+
 function submitChoice(idx: number) {
   if (!battleActive) return;
   if (spamLockUntil > 0 && battleClock < spamLockUntil) return;
   if (idx === correctIdx) {
     addCurrency(CURRENCY_MC);
-    correctWords.push({ en: currentWord.english, ko: currentWord.korean });
+    addWordLog(currentWord.english, currentWord.korean);
     pickNewWord();
   } else {
     wrongWords++;
@@ -4359,7 +4396,7 @@ let _compositionEnded = false;
   const correct = currentWord.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
   if (correct) {
     addCurrency(CURRENCY_TYPE);
-    correctWords.push({ en: currentWord.english, ko: currentWord.korean });
+    addWordLog(currentWord.english, currentWord.korean);
     pickNewWord();
     (e.target as HTMLInputElement).value = '';
     (e.target as HTMLInputElement).focus();
@@ -4392,10 +4429,11 @@ function spendCurrency(amt: number) {
 }
 
 function addCurrency(amt: number) {
+  const cmax = getCurrencyMax();
   if (isAdmin) {
-    currency = CURRENCY_MAX;
+    currency = cmax;
   } else {
-    currency = Math.max(0, Math.min(CURRENCY_MAX, currency + amt));
+    currency = Math.max(0, Math.min(cmax, currency + amt));
   }
   updateHud();
   if (gameMode === '2p' && amt > 0 && battleActive) {
@@ -4468,6 +4506,7 @@ function submitQuizEventChoice(idx: number) {
   if (correct) {
     res.innerHTML = '정답!<br><span style="font-size:16px;color:#a0ffb8;">+15 재화 지급</span>';
     addCurrency(15);
+    addWordLog(quizEventQuestion!.english, quizEventQuestion!.korean);
   } else {
     res.innerHTML = `오답<br><span style="font-size:14px;color:#ffb0b0;">정답: ${correctMeaning}</span>`;
   }
