@@ -7,7 +7,7 @@ import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
 import { FOODS, FOOD_IDS, isFoodId } from './foods';
-import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, ALL_ANIMALS, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard } from './supabase';
+import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, ALL_ANIMALS, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard, redeemCode } from './supabase';
 import type { UserProfile, LeaderboardEntry } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
@@ -3107,6 +3107,12 @@ document.body.insertAdjacentHTML('beforeend', `
     <button class="btn full-btn" id="btn-home-shop" style="font-size:14px;">상점</button>
     <button class="btn full-btn" id="btn-home-leaderboard" style="font-size:14px;">랭킹 보기</button>
     <button class="btn full-btn" id="btn-home-save" style="opacity:0.72;font-size:13px;padding:10px;">진행상황 저장하기</button>
+    <div style="width:100%;margin-top:4px;display:flex;gap:6px;">
+      <input id="in-redeem-code" placeholder="보상 코드 입력" maxlength="9"
+        style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid rgba(255,200,80,0.4);background:rgba(255,200,80,0.07);color:#fff5dc;font-size:13px;outline:none;letter-spacing:1px;text-transform:uppercase;" />
+      <button class="btn" id="btn-redeem" style="padding:8px 12px;font-size:13px;white-space:nowrap;">사용</button>
+    </div>
+    <div id="redeem-msg" style="font-size:12px;min-height:16px;text-align:center;"></div>
   </div>
 </div>
 
@@ -4737,6 +4743,47 @@ $('btn-home-save').addEventListener('click', async () => {
   }
   btn.disabled = false;
   setTimeout(() => { btn.textContent = '진행상황 저장하기'; btn.style.color = ''; }, 2000);
+});
+
+// Redeem Code
+$('btn-redeem').addEventListener('click', async () => {
+  const input = $('in-redeem-code') as HTMLInputElement;
+  const msg   = $('redeem-msg') as HTMLElement;
+  const code  = input.value.trim().toUpperCase();
+  if (!code) return;
+  if (!loggedInUserId) { msg.style.color = '#ff8888'; msg.textContent = '로그인 후 사용 가능합니다'; return; }
+
+  const btn = $('btn-redeem') as HTMLButtonElement;
+  btn.disabled = true;
+  msg.style.color = '#aaa';
+  msg.textContent = '확인 중...';
+
+  const result = await redeemCode(code);
+  btn.disabled = false;
+
+  if (result.ok) {
+    playerGold += result.gold;
+    updateHomeDisplay();
+    // Auto-save
+    saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...playerOwnedAnimals] });
+    input.value = '';
+    msg.style.color = '#a0ffb8';
+    msg.textContent = `골드 ${result.gold}개 획득!`;
+  } else {
+    msg.style.color = '#ff8888';
+    const reasons: Record<string, string> = {
+      not_found:   '유효하지 않은 코드입니다',
+      already_used:'이미 사용된 코드입니다',
+      expired:     '만료된 코드입니다',
+      not_logged_in:'로그인 후 사용 가능합니다',
+      error:       '오류가 발생했습니다. 다시 시도하세요',
+    };
+    msg.textContent = reasons[result.reason] ?? '오류';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 3000);
+});
+($('in-redeem-code') as HTMLInputElement).addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') ($('btn-redeem') as HTMLButtonElement).click();
 });
 
 // Deck

@@ -159,3 +159,32 @@ export async function fetchLeaderboard(
   }
   return (data ?? []) as LeaderboardEntry[];
 }
+
+// ─── Redeem Code ──────────────────────────────────────────────────────────────
+export type RedeemResult =
+  | { ok: true; gold: number }
+  | { ok: false; reason: 'not_found' | 'already_used' | 'expired' | 'not_logged_in' | 'error' };
+
+export async function redeemCode(code: string): Promise<RedeemResult> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, reason: 'not_logged_in' };
+
+  const { data, error } = await supabase
+    .from('redeem_codes')
+    .select('*')
+    .eq('code', code.toUpperCase())
+    .maybeSingle();
+
+  if (error || !data) return { ok: false, reason: 'not_found' };
+  if (data.used)       return { ok: false, reason: 'already_used' };
+  if (data.expires_at && new Date(data.expires_at) < new Date())
+    return { ok: false, reason: 'expired' };
+
+  const { error: updErr } = await supabase
+    .from('redeem_codes')
+    .update({ used: true })
+    .eq('code', code.toUpperCase());
+
+  if (updErr) return { ok: false, reason: 'error' };
+  return { ok: true, gold: data.gold };
+}
