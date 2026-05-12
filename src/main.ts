@@ -3779,14 +3779,13 @@ function updateCamera(dt = 0) {
 
   const baseZ = localSide === 'p1' ? FIELD_LEN * 0.33 : FIELD_LEN * 0.67;
   const lookZ = baseZ + camPan;
-  // Raise camera and pull back further to show more sky
-  const camH = isPortrait ? 10 : 7;
+  const camH = isPortrait ? 7 : 5;
   if (localSide === 'p1') {
-    camera.position.set(10, camH, lookZ);
-    camera.lookAt(0, 0, lookZ);
+    camera.position.set(8, camH, lookZ);
+    camera.lookAt(0, 3, lookZ);
   } else {
-    camera.position.set(-10, camH, lookZ);
-    camera.lookAt(0, 0, lookZ);
+    camera.position.set(-8, camH, lookZ);
+    camera.lookAt(0, 3, lookZ);
   }
 }
 
