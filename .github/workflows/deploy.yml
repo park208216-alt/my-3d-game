@@ -5,9 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -15,9 +13,6 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,9 +27,8 @@ jobs:
           VITE_SOCKET_URL: https://zoo-battle-eng-game-hs.onrender.com
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-      - uses: actions/configure-pages@v4
-      - uses: actions/upload-pages-artifact@v3
+          VITE_APPS_SCRIPT_URL: ${{ secrets.VITE_APPS_SCRIPT_URL }}
+      - uses: peaceiris/actions-gh-pages@v3
         with:
-          path: dist
-      - uses: actions/deploy-pages@v4
-        id: deployment
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
