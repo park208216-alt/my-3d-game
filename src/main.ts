@@ -3557,7 +3557,7 @@ function updateCamera(dt = 0) {
     camera.updateProjectionMatrix();
     camera.up.set(localSide === 'p1' ? -1 : 1, 0, 0);
     const midZ = (SPAWN_P1 + SPAWN_P2) / 2;
-    camera.position.set(0, 58, midZ);
+    camera.position.set(0, 38, midZ);
     camera.lookAt(0, 0, midZ);
     return;
   }
