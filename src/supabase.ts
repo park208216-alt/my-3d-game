@@ -72,13 +72,24 @@ export interface LeaderboardEntry {
   clear_count: number;
   best_time: number | null;
   updated_at: string;
+  wrong_count: number;
+  total_words: number;
+  rounds_completed: number;
 }
+
+// IMPORTANT: Run this SQL in Supabase Dashboard > SQL Editor before using these fields:
+// ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS wrong_count INTEGER DEFAULT 0;
+// ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS total_words INTEGER DEFAULT 0;
+// ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS rounds_completed INTEGER DEFAULT 0;
 
 export async function submitLeaderboard(
   nickname: string,
   wordCount: number,
   isWin: boolean,
-  clearTimeSec: number | null
+  clearTimeSec: number | null,
+  wrongCount: number = 0,
+  totalWords: number = 0,
+  roundsCompleted: number = 0
 ): Promise<void> {
   const deviceToken = getDeviceToken();
 
@@ -102,6 +113,9 @@ export async function submitLeaderboard(
   const newBestTime = isWin && clearTimeSec !== null
     ? (prev?.best_time ? Math.min(prev.best_time, clearTimeSec) : clearTimeSec)
     : (prev?.best_time ?? null);
+  const newWrongCount = Math.max(wrongCount, prev?.wrong_count ?? 0);
+  const newTotalWords = Math.max(totalWords, prev?.total_words ?? 0);
+  const newRoundsCompleted = Math.max(roundsCompleted, prev?.rounds_completed ?? 0);
 
   const { error } = await supabase.from('leaderboard').upsert({
     nickname,
@@ -109,6 +123,9 @@ export async function submitLeaderboard(
     word_count: newWordCount,
     clear_count: newClearCount,
     best_time: newBestTime,
+    wrong_count: newWrongCount,
+    total_words: newTotalWords,
+    rounds_completed: newRoundsCompleted,
     updated_at: new Date().toISOString(),
   });
   if (error) console.error('[Leaderboard] 저장 실패:', error.message, error.details);

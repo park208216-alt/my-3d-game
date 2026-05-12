@@ -548,8 +548,10 @@ let p1TowerLevel = 0; // 0-2: initial / mid / max
 let p2TowerLevel = 0;
 let p1TowerLastStage = -1;
 let p2TowerLastStage = -1;
-const HP_PER_UPGRADE = 30;   // 2 upgrades × 30 = +60 → max = 2× BASE_HP
-const UPGRADE_COSTS = [10, 15];
+const HP_PER_UPGRADE = 100;  // 2 upgrades: 100 → 200 → 300
+const UPGRADE_COSTS = [15, 20];
+const BASE_HEAL_COST = 3;
+const BASE_HEAL_AMOUNT = 20;
 
 // ─── Siege Weapons ────────────────────────────────────────────────────────────
 interface SiegeWeapon {
@@ -850,6 +852,9 @@ interface FoodProj {
   chainHitEnemies?: Set<string>;
   orbitAngle?: number;
   orbitRadius?: number;
+  // turnip fields
+  hitEnemies2?: Set<string>;     // hit set for downward phase
+  turnipPhase?: 'up' | 'down';
 }
 
 type FoodZoneType = 'avocado_slow' | 'eggplant_dot' | 'lettuce_mine' | 'carrot_spike' | 'mushroom_paralyze';
@@ -1368,22 +1373,21 @@ function castPepperRed(side: Side) {
 }
 function castTurnip(side: Side) {
   const def = FOODS.turnip;
-  const baseZ = getMyBaseZ(side);
-  // spawn turnips at enemy positions, jumping up
-  const enemies = pickEnemiesNear(side, def.count, baseZ);
+  const enemies = pickEnemiesNear(side, def.count, getEnemyBaseZ(side));
   for (let i = 0; i < def.count; i++) {
     const target = enemies[i];
     const x = target ? target.x : (Math.random() - 0.5) * 8;
-    const z = target ? target.z : baseZ + forwardSign(side) * (8 + i * 3);
-    const start = new THREE.Vector3(x, 0, z);
+    const z = target ? target.z : getEnemyBaseZ(side) + forwardSign(side) * (8 + i * 3);
+    const start = new THREE.Vector3(x, -0.3, z);
     const mesh = makeFoodProjMesh('turnip');
     mesh.position.copy(start);
     foodProjectiles.push({
       food: 'turnip', effect: 'turnip_uppercut', type: 'turnip', side, mesh,
-      pos: start.clone(), vel: new THREE.Vector3(0, 9, 0),
+      pos: start.clone(), vel: new THREE.Vector3(0, 0, 0),
       done: false, age: 0, damage: def.damage ?? 8,
-      spinAxis: new THREE.Vector3(1, 0, 0), spinSpeed: 10,
       hitEnemies: new Set<string>(),
+      hitEnemies2: new Set<string>(),
+      turnipPhase: 'up' as 'up' | 'down',
     });
   }
 }
@@ -1503,10 +1507,29 @@ function stepFoodProjectiles(dt: number) {
         break;
       }
       case 'turnip': {
-        p.vel.y -= 9.8 * dt;
-        p.pos.addScaledVector(p.vel, dt);
+        const RISE_SPEED = 7;
+        const FALL_SPEED = 6;
+        const MAX_HEIGHT = 3.5;
+        if (p.turnipPhase === 'up') {
+          p.pos.y += RISE_SPEED * dt;
+          if (p.pos.y >= MAX_HEIGHT) { p.pos.y = MAX_HEIGHT; p.turnipPhase = 'down'; }
+        } else {
+          p.pos.y -= FALL_SPEED * dt;
+          if (p.pos.y <= -0.4) { p.done = true; p.pos.y = -0.4; }
+        }
         if (p.mesh) p.mesh.position.copy(p.pos);
-        if (p.pos.y <= 0 && p.age > 0.2) p.done = true;
+        // Damage check: hit enemies within radius 1.2 horizontally
+        const hitSet = p.turnipPhase === 'up' ? p.hitEnemies! : (p.hitEnemies2 ?? (p.hitEnemies2 = new Set()));
+        for (const u of units) {
+          if (u.side === p.side || u.state === 'dead' || hitSet.has(u.id)) continue;
+          const dx = u.x - p.pos.x, dz = u.z - p.pos.z;
+          if (Math.sqrt(dx*dx + dz*dz) < 1.2) {
+            hitSet.add(u.id);
+            u.hp = Math.max(0, u.hp - p.damage);
+            if (u.hp <= 0) u.state = 'dead';
+            sfx('food_hit');
+          }
+        }
         break;
       }
       case 'homing_missile': {
@@ -1568,6 +1591,7 @@ function stepFoodProjectiles(dt: number) {
           if (p.spawnChickOnImpact && Math.random() < 0.5) {
             spawnUnit('chick', p.side, undefined, p.pos.x, p.pos.z);
           }
+          spawnParticles(p.pos.clone(), 0xffdd44, 6, 3, 0.3);
           sfx('food_hit'); p.done = true;
         }
       } else if (!p.target) {
@@ -1686,6 +1710,12 @@ function stepFoodProjectiles(dt: number) {
         if (d < 1.1) {
           p.target.hp = Math.max(0, p.target.hp - p.damage);
           if (p.target.hp <= 0) p.target.state = 'dead';
+          // Tomato: knockback + slow
+          const kbSign = p.target.side === 'p1' ? -1 : 1;
+          p.target.z = Math.max(0, Math.min(FIELD_LEN, p.target.z + kbSign * 1.5));
+          if (p.target.mesh) p.target.mesh.position.z = p.target.z;
+          p.target.slowUntil = battleClock + 1.5;
+          p.target.slowFactor = 0.5;
           sfx('food_hit'); p.done = true;
         }
       }
@@ -1694,7 +1724,15 @@ function stepFoodProjectiles(dt: number) {
         const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead');
         for (const e of enemies) {
           const ed = Math.sqrt((p.pos.x - e.x) ** 2 + (p.pos.z - e.z) ** 2);
-          if (ed < 1.4) { e.hp = Math.max(0, e.hp - p.damage); if (e.hp <= 0) e.state = 'dead'; }
+          if (ed < 1.4) {
+            e.hp = Math.max(0, e.hp - p.damage); if (e.hp <= 0) e.state = 'dead';
+            // Tomato: knockback + slow on ground hit
+            const kbSign2 = e.side === 'p1' ? -1 : 1;
+            e.z = Math.max(0, Math.min(FIELD_LEN, e.z + kbSign2 * 1.5));
+            if (e.mesh) e.mesh.position.z = e.z;
+            e.slowUntil = battleClock + 1.5;
+            e.slowFactor = 0.5;
+          }
         }
         sfx('food_hit'); p.done = true;
       }
@@ -1846,23 +1884,8 @@ function stepFoodProjectiles(dt: number) {
       continue;
     }
 
+    // turnip_uppercut damage is now handled inline in the 'turnip' case above
     if (p.effect === 'turnip_uppercut') {
-      const enemies = units.filter(e => e.side !== p.side && e.state !== 'dead' && ANIMALS[e.animalId]?.layer !== 'air');
-      for (const e of enemies) {
-        const ed = Math.sqrt((p.pos.x - e.x)**2 + (p.pos.z - e.z)**2);
-        const ey = (e.mesh?.position.y ?? 0);
-        const dy = Math.abs(p.pos.y - ey - 0.4);
-        if (ed < 0.6 && dy < 0.6) {
-          // Re-hittable cycle: track via hitEnemies but clear when leaves
-          if (!p.hitEnemies?.has(e.id)) {
-            e.hp = Math.max(0, e.hp - p.damage);
-            if (e.hp <= 0) e.state = 'dead';
-            p.hitEnemies?.add(e.id);
-          }
-        } else {
-          p.hitEnemies?.delete(e.id);
-        }
-      }
       continue;
     }
 
@@ -2107,6 +2130,7 @@ interface UnitSim {
   dotNextTick?: number;
   slowedUntil?: number;          // 아보카도 zone slow flag (frame-evaluated, not timestamp)
   slowFactor?: number;           // ground speed multiplier (0.4 = 60% slow)
+  slowUntil?: number;            // 토마토 knockback slow end time
 }
 
 interface BaseSim {
@@ -2143,6 +2167,76 @@ scene.fog = new THREE.Fog(0xb0dff0, 40, 90);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / CANVAS_H(), 0.1, 200);
 resizeRenderer();
 window.addEventListener('resize', resizeRenderer);
+
+// ─── Particle System ──────────────────────────────────────────────────────────
+interface Particle {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  life: number;
+  maxLife: number;
+  color: THREE.Color;
+  size: number;
+}
+const activeParticles: Particle[] = [];
+const MAX_PARTICLES = 300;
+
+function spawnParticles(pos: THREE.Vector3, color: number, count: number, speed: number, lifespan: number) {
+  if (!battleActive) return;
+  for (let i = 0; i < count && activeParticles.length < MAX_PARTICLES; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const elevation = (Math.random() - 0.3) * Math.PI;
+    const spd = speed * (0.5 + Math.random() * 0.5);
+    activeParticles.push({
+      position: pos.clone().add(new THREE.Vector3((Math.random()-0.5)*0.3, 0.2, (Math.random()-0.5)*0.3)),
+      velocity: new THREE.Vector3(
+        Math.cos(angle) * Math.cos(elevation) * spd,
+        Math.abs(Math.sin(elevation)) * spd + 1,
+        Math.sin(angle) * Math.cos(elevation) * spd
+      ),
+      life: lifespan,
+      maxLife: lifespan,
+      color: new THREE.Color(color),
+      size: 0.15 + Math.random() * 0.15,
+    });
+  }
+}
+
+const particleGeo = new THREE.BufferGeometry();
+const particlePositions = new Float32Array(MAX_PARTICLES * 3);
+const particleColors = new Float32Array(MAX_PARTICLES * 3);
+particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+particleGeo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+const particleMat = new THREE.PointsMaterial({ size: 0.25, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false });
+const particlePoints = new THREE.Points(particleGeo, particleMat);
+particlePoints.frustumCulled = false;
+scene.add(particlePoints);
+
+function stepParticles(dt: number) {
+  for (let i = activeParticles.length - 1; i >= 0; i--) {
+    const p = activeParticles[i];
+    p.life -= dt;
+    if (p.life <= 0) { activeParticles.splice(i, 1); continue; }
+    p.velocity.y -= 6 * dt; // gravity
+    p.position.addScaledVector(p.velocity, dt);
+  }
+  const count = activeParticles.length;
+  for (let i = 0; i < MAX_PARTICLES; i++) {
+    if (i < count) {
+      particlePositions[i*3]   = activeParticles[i].position.x;
+      particlePositions[i*3+1] = activeParticles[i].position.y;
+      particlePositions[i*3+2] = activeParticles[i].position.z;
+      const alpha = activeParticles[i].life / activeParticles[i].maxLife;
+      particleColors[i*3]   = activeParticles[i].color.r * alpha;
+      particleColors[i*3+1] = activeParticles[i].color.g * alpha;
+      particleColors[i*3+2] = activeParticles[i].color.b * alpha;
+    } else {
+      particlePositions[i*3] = 0; particlePositions[i*3+1] = -100; particlePositions[i*3+2] = 0;
+    }
+  }
+  (particleGeo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+  (particleGeo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+  particleMat.opacity = activeParticles.length > 0 ? 0.9 : 0;
+}
 
 // Lighting — 양쪽 대칭 조명
 scene.add(new THREE.AmbientLight(0xffffff, 1.0));
@@ -2426,6 +2520,8 @@ function spawnUnit(animalId: string, side: Side, forcedId?: string, forcedX?: nu
     jumpVel: def.jumping ? 5 : (def.leap ? 0 : undefined),
   };
   units.push(unit);
+  // Spawn particles
+  spawnParticles(new THREE.Vector3(x, 0.5, z), ANIMALS[animalId]?.color ?? 0x88aaff, 8, 2.5, 0.4);
   return unit;
 }
 
@@ -2598,6 +2694,9 @@ function effSpd(u: UnitSim, def: AnimalDef): number {
   if (u.greenAppleBuffed) s *= 2;
   // Avocado slow (refreshed each frame while inside zone)
   if (u.slowedUntil && battleClock < u.slowedUntil) s *= (u.slowFactor ?? 1);
+  // Tomato knockback slow
+  const slowMult = (u.slowUntil && battleClock < u.slowUntil) ? (u.slowFactor ?? 1) : 1;
+  s *= slowMult;
   return s;
 }
 function effAtk(u: UnitSim, def: AnimalDef): number {
@@ -2779,6 +2878,8 @@ function syncUnitMeshes() {
         p1MonstersKilled++;
       }
     }
+    // Death particles
+    spawnParticles(new THREE.Vector3(u.x, 1, u.z), ANIMALS[u.animalId]?.color ?? 0xffffff, 12, 4, 0.6);
     removeUnitMeshes(u);
     units = units.filter(x => x.id !== u.id);
   }
@@ -2827,6 +2928,9 @@ let p1MonstersKilled = 0;
 let p1BossesKilled = 0;
 let p1DragonKilled = false;
 let correctWords: { en: string; ko: string }[] = [];
+let wrongWords = 0;
+let spamWrongLog: number[] = []; // timestamps of recent wrong answers
+let spamLockUntil = 0; // battleClock value when lock expires
 let isTypingMode = false;
 
 // 2P socket state
@@ -2852,10 +2956,12 @@ document.body.insertAdjacentHTML('beforeend', `
   /* jungle panel */
   .jui-panel{background:rgba(12,30,8,0.82);border:2px solid rgba(80,200,60,0.4);border-radius:18px;padding:28px 28px;width:100%;max-width:320px;display:flex;flex-direction:column;gap:10px;box-shadow:0 6px 40px rgba(0,0,0,0.65);}
   /* buttons */
-  .btn{padding:12px 28px;border-radius:14px;border:2px solid rgba(60,180,40,0.5);background:linear-gradient(180deg,#3a7a20,#1e5010);color:#e8ffdc;font-size:16px;font-weight:700;cursor:pointer;transition:filter 0.12s;text-shadow:0 1px 3px rgba(0,0,0,0.6);box-shadow:0 3px 0 rgba(0,0,0,0.45),0 0 10px rgba(60,200,40,0.12);}
+  .btn{padding:12px 28px;border-radius:14px;border:2px solid rgba(60,180,40,0.5);background:linear-gradient(180deg,#3a7a20,#1e5010);color:#e8ffdc;font-size:16px;font-weight:700;cursor:pointer;transition:filter 0.08s,transform 0.08s;text-shadow:0 1px 3px rgba(0,0,0,0.6);box-shadow:0 3px 0 rgba(0,0,0,0.45),0 0 10px rgba(60,200,40,0.12);}
   .btn:hover{filter:brightness(1.22);}
+  .btn:active{filter:brightness(1.4) drop-shadow(0 0 6px rgba(255,255,255,0.6));transform:scale(0.97);}
   .btn.primary{background:linear-gradient(180deg,#52cc28,#2b8410);border-color:rgba(120,255,80,0.65);color:#fff;}
   .btn.primary:hover{filter:brightness(1.15);}
+  .btn.primary:active{filter:brightness(1.5) drop-shadow(0 0 8px rgba(80,200,120,0.8));}
   .btn.green{background:linear-gradient(180deg,#3aaa50,#1a6030);border-color:rgba(80,220,120,0.5);color:#a0ffb8;}
   .btn.green:hover{filter:brightness(1.2);}
   .btn.danger{background:linear-gradient(180deg,#c04030,#8a1020);border-color:rgba(255,80,60,0.5);}
@@ -2977,6 +3083,15 @@ document.body.insertAdjacentHTML('beforeend', `
   <button id="btn-chest-close" class="btn primary" style="margin-top:20px;opacity:0;pointer-events:none;padding:12px 36px;">닫기</button>
 </div>
 
+<!-- CHEST INFO OVERLAY -->
+<div id="chest-info-overlay" style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.8);align-items:center;justify-content:center;">
+  <div style="background:rgba(16,20,48,0.98);border:2px solid rgba(255,255,255,0.2);border-radius:16px;padding:20px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto;">
+    <div id="chest-info-title" style="font-size:16px;font-weight:900;margin-bottom:12px;"></div>
+    <div id="chest-info-list" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    <button id="btn-chest-info-close" class="btn" style="margin-top:16px;width:100%;">닫기</button>
+  </div>
+</div>
+
 <!-- 2P LOBBY -->
 <div id="screen-lobby2p" class="screen hidden">
   <div class="jui-panel" style="align-items:center;text-align:center;">
@@ -3087,12 +3202,13 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
   <!-- Left: summon buttons -->
   <div id="panel-left" style="position:absolute;top:32px;left:0;width:50%;bottom:0;display:flex;flex-direction:column;padding:8px;gap:6px;">
-    <div id="summon-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;overflow-y:auto;flex:1;align-content:start;padding-right:2px;"></div>
+    <div id="summon-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;overflow-y:auto;flex:1;align-content:start;padding-right:2px;"></div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
-      <button id="btn-upgrade" style="flex:1;min-width:120px;padding:5px 6px;border-radius:8px;border:1px solid rgba(255,200,80,0.5);background:rgba(255,200,80,0.12);color:#ffe08a;font-weight:700;cursor:pointer;font-size:10px;">⬆ 기지 업그레이드</button>
+      <button id="btn-upgrade" style="flex:1;min-width:120px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,200,80,0.5);background:rgba(255,200,80,0.12);color:#ffe08a;font-weight:700;cursor:pointer;font-size:12px;">기지 업그레이드</button>
       <span id="upgrade-info" style="font-size:10px;opacity:0.7;white-space:nowrap;min-width:40px;text-align:right;"></span>
-      <button id="btn-ballista" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(100,200,255,0.4);background:rgba(100,200,255,0.1);color:#aae4ff;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">발리스타 (10)</button>
-      <button id="btn-catapult" style="padding:5px 6px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.1);color:#ffc888;font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap;">박격포 (10)</button>
+      <button id="btn-heal-base" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(80,255,120,0.4);background:rgba(80,255,120,0.1);color:#a0ffb8;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap;">회복 (3재화)</button>
+      <button id="btn-ballista" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(100,200,255,0.4);background:rgba(100,200,255,0.1);color:#aae4ff;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap;">발리스타 (10)</button>
+      <button id="btn-catapult" style="padding:7px 10px;border-radius:8px;border:1px solid rgba(255,160,80,0.4);background:rgba(255,160,80,0.1);color:#ffc888;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap;">박격포 (10)</button>
     </div>
   </div>
   <!-- Right: word quiz -->
@@ -3259,6 +3375,7 @@ function buildDeckCards() {
       ].join('');
       card.innerHTML = `
         <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:4px;">${d.name}</div>
+        <div style="margin-top:2px;font-size:10px;color:#88ccff;">${d.range > 2 ? '원거리' : '근거리'}</div>
         <div style="opacity:0.75;line-height:1.6;font-size:11px;">
           HP ${d.hp} / ATK ${d.atk}<br>
           SPD ${d.spd} / 비용 <b>${d.cost}</b>
@@ -3289,6 +3406,38 @@ function buildDeckCards() {
         <div style="opacity:0.85;line-height:1.4;font-size:10px;color:#fff5dc;min-height:28px;">${f.desc}</div>
         <div style="margin-top:4px;font-size:11px;color:#ffd060;">비용 <b>${f.cost}</b></div>`;
       card.addEventListener('click', () => { sfx('card'); toggleDeckCard(id); });
+      container.appendChild(card);
+    }
+  }
+
+  // Unowned items section
+  const allIds = [...ANIMAL_IDS, ...FOOD_IDS];
+  const unownedIds = allIds.filter(id => !playerOwnedAnimals.includes(id));
+  if (unownedIds.length > 0) {
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'grid-column:1/-1;font-size:12px;font-weight:700;color:#888;letter-spacing:1px;margin-top:14px;border-top:1px solid rgba(255,255,255,0.1);padding-top:10px;';
+    hdr.textContent = `미획득 (${unownedIds.length})`;
+    container.appendChild(hdr);
+    const animalGrade = (id: string): string => {
+      for (const g of ['A','B','C','D']) {
+        if ((CHEST_POOLS[g] ?? []).includes(id)) return `${g}등급 상자`;
+      }
+      return '?';
+    };
+    for (const id of unownedIds) {
+      const isFood = isFoodId(id);
+      const def = isFood ? FOODS[id] : ANIMALS[id];
+      if (!def) continue;
+      const hex = `#${def.color.toString(16).padStart(6,'0')}`;
+      const card = document.createElement('div');
+      card.style.cssText = 'padding:8px 6px;border-radius:12px;border:2px solid rgba(255,255,255,0.08);background:rgba(0,0,0,0.3);text-align:center;font-size:11px;opacity:0.6;position:relative;';
+      const atkType = !isFood ? `<div style="font-size:9px;color:#88ccff;">${(def as AnimalDef).range > 2 ? '원거리' : '근거리'}</div>` : `<div style="font-size:9px;color:#ffd060;">FOOD</div>`;
+      card.innerHTML = `
+        <div style="width:8px;height:8px;border-radius:50%;background:${hex};margin:0 auto 4px;"></div>
+        <div style="font-size:12px;font-weight:700;color:#ccc;margin-bottom:2px;">${def.name}</div>
+        ${atkType}
+        <div style="font-size:9px;color:#ffd060;margin-top:3px;">${animalGrade(id)}</div>
+      `;
       container.appendChild(card);
     }
   }
@@ -3336,18 +3485,21 @@ function buildSummonButtons() {
   grid.innerHTML = '';
   summonBtns.length = 0;
   const deck = playerDeck.length > 0 ? playerDeck : ANIMAL_IDS.slice(0, DECK_MAX);
-  for (const id of deck) {
+  const hotkeys = ['Q','W','E','A','S','D'];
+  for (let i = 0; i < deck.length; i++) {
+    const id = deck[i];
     const isFood = isFoodId(id);
     const def: { name: string; cost: number } = isFood ? FOODS[id] : ANIMALS[id];
     const btn = document.createElement('button');
     btn.dataset.id = id;
     btn.dataset.kind = isFood ? 'food' : 'animal';
+    const keyBadge = `<span style="display:block;font-size:9px;color:rgba(255,255,255,0.5);margin-bottom:1px;">${hotkeys[i] ?? ''}</span>`;
     if (isFood) {
       btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,200,80,0.4);background:linear-gradient(180deg,rgba(80,40,5,0.50),rgba(40,20,2,0.50));color:#fff5dc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
-      btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.85;font-size:11px;color:#ffd060;">비용 ${def.cost}</span>`;
+      btn.innerHTML = `${keyBadge}<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.85;font-size:11px;color:#ffd060;">비용 ${def.cost}</span>`;
     } else {
       btn.style.cssText = 'border-radius:10px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.07);color:#e8eefc;font-weight:700;cursor:pointer;font-size:12px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;';
-      btn.innerHTML = `<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${def.cost}</span>`;
+      btn.innerHTML = `${keyBadge}<span style="font-size:14px;color:#fff">${def.name}</span><span style="opacity:0.8;font-size:11px;">비용 ${def.cost}</span>`;
     }
     btn.addEventListener('click', () => {
       if (isFood) playerUseFood(id);
@@ -3409,13 +3561,13 @@ function updateUpgradeButton() {
   const btn = $('btn-upgrade') as HTMLButtonElement;
   const info = $('upgrade-info');
   if (myLevel >= 2) {
-    btn.textContent = '⬆ 기지 최대 레벨';
+    btn.textContent = '기지 최대 레벨';
     btn.style.opacity = '0.4';
     btn.style.cursor = 'not-allowed';
     info.textContent = 'MAX';
   } else {
     const cost = UPGRADE_COSTS[myLevel];
-    btn.textContent = `⬆ 업그레이드 (${cost}재화)`;
+    btn.textContent = `업그레이드 (${cost}재화)`;
     btn.style.opacity = currency >= cost ? '1' : '0.4';
     btn.style.cursor = currency >= cost ? 'pointer' : 'not-allowed';
     info.textContent = `Lv${myLevel + 1}→${myLevel + 2}`;
@@ -3481,6 +3633,17 @@ function playerUseFood(foodId: string) {
 ($('btn-upgrade') as HTMLButtonElement).addEventListener('click', upgradeBase);
 ($('btn-ballista') as HTMLButtonElement).addEventListener('click', () => buySiege('ballista'));
 ($('btn-catapult') as HTMLButtonElement).addEventListener('click', () => buySiege('catapult'));
+($('btn-heal-base') as HTMLButtonElement).addEventListener('click', () => {
+  if (!battleActive) return;
+  if (currency < BASE_HEAL_COST) return;
+  const myBase = localSide === 'p1' ? p1Base : p2Base;
+  if (!myBase) return;
+  if (myBase.hp >= myBase.maxHp) { showQuizMsg('기지 체력이 이미 최대입니다'); return; }
+  currency -= BASE_HEAL_COST;
+  myBase.hp = Math.min(myBase.maxHp, myBase.hp + BASE_HEAL_AMOUNT);
+  myBase.lastHp = -1; // force HP bar redraw
+  updateHud();
+});
 
 $('btn-cammode').addEventListener('click', () => {
   camMode = camMode === 'side' ? 'top' : 'side';
@@ -3495,6 +3658,9 @@ function clearBattle() {
   p1BossesKilled = 0;
   p1DragonKilled = false;
   correctWords = [];
+  wrongWords = 0;
+  spamWrongLog = [];
+  spamLockUntil = 0;
   if (p1Base) { scene.remove(p1Base.mesh); scene.remove(p1Base.hpSprite); }
   if (p2Base) { scene.remove(p2Base.mesh); scene.remove(p2Base.hpSprite); }
   for (const m of baseTowerMeshes) scene.remove(m);
@@ -3588,12 +3754,11 @@ function updateCamera(dt = 0) {
   }
 
   // Restore side-view camera settings
-  if (camera.fov !== 60) { camera.fov = 60; camera.updateProjectionMatrix(); }
   if (camera.up.y !== 1) camera.up.set(0, 1, 0);
 
   // Portrait mode: wider FOV so more of the field fits on screen
   const isPortrait = window.innerHeight > window.innerWidth;
-  const targetFov = isPortrait ? 80 : 60;
+  const targetFov = isPortrait ? 80 : 65;
   if (camera.fov !== targetFov) { camera.fov = targetFov; camera.updateProjectionMatrix(); }
 
   // Pan limits: generous forward (enemy side) range, tighter backward range
@@ -3614,14 +3779,14 @@ function updateCamera(dt = 0) {
 
   const baseZ = localSide === 'p1' ? FIELD_LEN * 0.33 : FIELD_LEN * 0.67;
   const lookZ = baseZ + camPan;
-  // Raise camera slightly on portrait so units don't fill the screen
-  const camH = isPortrait ? 7 : 5;
+  // Raise camera and pull back further to show more sky
+  const camH = isPortrait ? 10 : 7;
   if (localSide === 'p1') {
-    camera.position.set(8, camH, lookZ);
-    camera.lookAt(0, 2, lookZ);
+    camera.position.set(10, camH, lookZ);
+    camera.lookAt(0, 0, lookZ);
   } else {
-    camera.position.set(-8, camH, lookZ);
-    camera.lookAt(0, 2, lookZ);
+    camera.position.set(-10, camH, lookZ);
+    camera.lookAt(0, 0, lookZ);
   }
 }
 
@@ -3641,9 +3806,10 @@ function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear') 
     const isMe = e.nickname === myNick;
     const rank = i + 1;
     const rankLabel = rank <= 3 ? ['1위', '2위', '3위'][rank - 1] : `${rank}위`;
+    const accuracy = (e.total_words ?? 0) > 0 ? Math.round((e.word_count / e.total_words) * 100) : 100;
     const val = tab === 'words'
-      ? `${e.word_count}개`
-      : `${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}`;
+      ? `${e.word_count}개 (정답률 ${accuracy}%)`
+      : `${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}${e.rounds_completed ? ` · ${e.rounds_completed}라운드` : ''}`;
     const rankColor = rank === 1 ? '#ffd700' : rank === 2 ? '#c0c0c0' : rank === 3 ? '#cd7f32' : '#aaa';
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:${isMe ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isMe ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.07)'};">
       <span style="min-width:34px;font-size:13px;font-weight:700;color:${rankColor};">${rankLabel}</span>
@@ -3807,9 +3973,14 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
     playerGold += gTotal;
 
     // Submit leaderboard
+    // NOTE: Run this SQL in Supabase Dashboard > SQL Editor:
+    // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS wrong_count INTEGER DEFAULT 0;
+    // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS total_words INTEGER DEFAULT 0;
+    // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS rounds_completed INTEGER DEFAULT 0;
     const nick = loggedInUsername || guestNickname;
     if (nick) {
-      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null);
+      const totalAttempted = correctWords.length + wrongWords;
+      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null, wrongWords, totalAttempted, round);
     }
 
     const row = (label: string, val: string) =>
@@ -3890,13 +4061,24 @@ function renderQuiz() {
 
 function submitChoice(idx: number) {
   if (!battleActive) return;
+  if (spamLockUntil > 0 && battleClock < spamLockUntil) return;
   if (idx === correctIdx) {
     addCurrency(CURRENCY_MC);
     correctWords.push({ en: currentWord.english, ko: currentWord.korean });
     pickNewWord();
   } else {
+    wrongWords++;
     addCurrency(-1);
     showQuizMsg('틀렸습니다 (-1)');
+    spamWrongLog.push(battleClock);
+    spamWrongLog = spamWrongLog.filter(t => battleClock - t < 8);
+    if (spamWrongLog.length >= 4) {
+      spamLockUntil = battleClock + 2;
+      spamWrongLog = [];
+      $('choices').style.visibility = 'hidden';
+      ($('type-input') as HTMLInputElement).disabled = true;
+      showQuizMsg('연속 오답 - 2초 대기');
+    }
   }
 }
 
@@ -3920,11 +4102,15 @@ function exitTypingMode() {
 
 ($('btn-type') as HTMLButtonElement).addEventListener('click', enterTypingMode);
 
+let _compositionEnded = false;
+($('type-input') as HTMLInputElement).addEventListener('compositionend', () => { _compositionEnded = true; });
 ($('type-input') as HTMLInputElement).addEventListener('keydown', (e) => {
   e.stopPropagation();
   if (e.code === 'Escape') { exitTypingMode(); return; }
   if (e.code !== 'Enter') return;
-  if (e.isComposing) return; // IME 한글 조합 중 Enter 무시
+  if (e.isComposing && !_compositionEnded) return;
+  _compositionEnded = false;
+  if (spamLockUntil > 0 && battleClock < spamLockUntil) return;
   const typed = (e.target as HTMLInputElement).value.trim();
   if (!typed) return;
   const correct = currentWord.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
@@ -3935,8 +4121,18 @@ function exitTypingMode() {
     (e.target as HTMLInputElement).value = '';
     (e.target as HTMLInputElement).focus();
   } else {
+    wrongWords++;
     addCurrency(-1);
     showQuizMsg('틀렸습니다 (-1)');
+    spamWrongLog.push(battleClock);
+    spamWrongLog = spamWrongLog.filter(t => battleClock - t < 8);
+    if (spamWrongLog.length >= 4) {
+      spamLockUntil = battleClock + 2;
+      spamWrongLog = [];
+      $('choices').style.visibility = 'hidden';
+      ($('type-input') as HTMLInputElement).disabled = true;
+      showQuizMsg('연속 오답 - 2초 대기');
+    }
     (e.target as HTMLInputElement).value = '';
   }
 });
@@ -4031,7 +4227,7 @@ function endQuizEvent() {
   $('quiz-event-overlay').style.display = 'none';
 }
 
-// Keyboard shortcuts for quiz
+// Keyboard shortcuts for quiz + summon hotkeys
 window.addEventListener('keydown', (e) => {
   if (currentScreen !== 'battle') return;
   if (e.code === 'KeyT') { enterTypingMode(); return; }
@@ -4039,6 +4235,17 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Digit1') submitChoice(0);
   else if (e.code === 'Digit2') submitChoice(1);
   else if (e.code === 'Digit3') submitChoice(2);
+
+  // Summon hotkeys Q,W,E,A,S,D
+  if (!isTypingMode && currentScreen === 'battle' && battleActive) {
+    const SUMMON_KEYS: Record<string, number> = { KeyQ:0, KeyW:1, KeyE:2, KeyA:3, KeyS:4, KeyD:5 };
+    const idx = SUMMON_KEYS[e.code];
+    if (idx !== undefined && idx < playerDeck.length) {
+      const id = playerDeck[idx];
+      if (isFoodId(id)) playerUseFood(id);
+      else playerSummon(id);
+    }
+  }
 });
 
 // ─── 2P Socket Setup ──────────────────────────────────────────────────────────
@@ -4186,7 +4393,7 @@ function rollAnimal(grade: string): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function showResultCard(itemId: string, grade: string, isNew: boolean) {
+function showResultCard(itemId: string, grade: string, isNew: boolean, price: number = 1) {
   const isFood = isFoodId(itemId);
   const def = isFood ? FOODS[itemId] : ANIMALS[itemId];
   if (!def) return;
@@ -4210,7 +4417,7 @@ function showResultCard(itemId: string, grade: string, isNew: boolean) {
   const tag = isFood ? `<div style="font-size:10px;color:#ffd060;letter-spacing:2px;margin-bottom:4px;">FOOD</div>` : '';
   const newBadge = isNew
     ? `<div style="font-size:11px;font-weight:900;color:#00ff88;letter-spacing:2px;margin-bottom:8px;text-shadow:0 0 8px #00ff8899;">NEW!</div>`
-    : `<div style="font-size:11px;font-weight:700;color:#ffaa44;letter-spacing:1px;margin-bottom:8px;">중복 획득 (+1G 환급)</div>`;
+    : `<div style="font-size:11px;font-weight:700;color:#ffaa44;letter-spacing:1px;margin-bottom:8px;">중복 획득 (+${Math.floor(price / 2)}G 환급)</div>`;
   card.innerHTML = `
     <div style="background:rgba(8,20,5,0.95);border:2px solid ${gc};border-radius:18px;padding:20px 28px;min-width:220px;text-align:center;box-shadow:0 0 30px ${gc}44;">
       <div style="font-size:12px;font-weight:700;color:${gc};letter-spacing:2px;margin-bottom:6px;">${grade}등급</div>
@@ -4242,22 +4449,47 @@ function buildShopChests() {
     const card = document.createElement('div');
     card.className = 'chest-card';
     card.style.borderColor = borderColor;
+    card.style.position = 'relative';
     const canBuy = playerGold >= price;
     card.innerHTML = `
       <div style="font-size:16px;font-weight:900;color:${labelColor};">${label}</div>
+      <button class="chest-info-btn" data-grade="${grade}" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.1);color:#ccc;font-size:12px;font-weight:700;cursor:pointer;">?</button>
       <img src="${B}ui/chest/chest_closed_${grade}.png" alt="${label}" style="width:100%;max-width:190px;height:auto;">
       <div style="font-size:14px;color:#ffd060;font-weight:700;">${price} G</div>
       <button class="btn primary full-btn" data-grade="${grade}" data-price="${price}" style="font-size:14px;padding:10px;${canBuy ? '' : 'opacity:0.4;pointer-events:none;'}">열기</button>
     `;
     grid.appendChild(card);
   }
-  grid.querySelectorAll('button[data-grade]').forEach(btn => {
+  grid.querySelectorAll('button[data-grade][data-price]').forEach(btn => {
     btn.addEventListener('click', () => {
       const grade = (btn as HTMLElement).dataset.grade!;
       const price = parseInt((btn as HTMLElement).dataset.price!);
       triggerChestOpen(grade, price);
     });
   });
+  grid.querySelectorAll('.chest-info-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const grade = (btn as HTMLElement).dataset.grade!;
+      const gradeLabel: Record<string,string> = { D:'D등급', C:'C등급', B:'B등급', A:'A등급' };
+      const gradeColor: Record<string,string> = { D:'#bbb', C:'#4af', B:'#b6f', A:'#fd0' };
+      $('chest-info-title').innerHTML = `<span style="color:${gradeColor[grade]}">${gradeLabel[grade]}</span> 획득 가능 목록`;
+      const pool = CHEST_POOLS[grade] ?? [];
+      const listEl = $('chest-info-list');
+      listEl.innerHTML = pool.map(id => {
+        const isFood = isFoodId(id);
+        const def = isFood ? FOODS[id] : ANIMALS[id];
+        const hex = def ? `#${def.color.toString(16).padStart(6,'0')}` : '#888';
+        return `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:8px;background:rgba(255,255,255,0.06);font-size:12px;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${hex};display:inline-block;flex-shrink:0;"></span>
+          <span>${def?.name ?? id}</span>
+          ${isFood ? '<span style="font-size:9px;color:#ffd060;margin-left:2px;">FOOD</span>' : ''}
+        </div>`;
+      }).join('');
+      ($('chest-info-overlay') as HTMLElement).style.display = 'flex';
+    });
+  });
+  $('btn-chest-info-close').addEventListener('click', () => { ($('chest-info-overlay') as HTMLElement).style.display = 'none'; });
 }
 
 function triggerChestOpen(grade: string, price: number) {
@@ -4276,7 +4508,7 @@ function triggerChestOpen(grade: string, price: number) {
   if (isNew) {
     playerOwnedAnimals.push(rolledAnimal);
   } else {
-    playerGold += 1; // duplicate refund
+    playerGold += Math.floor(price / 2); // duplicate refund = half price
   }
 
   img.src = `${B}ui/chest/chest_closed_${grade}.png`;
@@ -4302,7 +4534,7 @@ function triggerChestOpen(grade: string, price: number) {
         setTimeout(() => {
           img.src = `${B}ui/chest/chest_open_${grade}.png`;
           img.style.opacity = '1';
-          showResultCard(rolledAnimal, grade, isNew);
+          showResultCard(rolledAnimal, grade, isNew, price);
           closeBtn.style.opacity = '1';
           closeBtn.style.pointerEvents = 'auto';
         }, 200);
@@ -4491,6 +4723,7 @@ function animate() {
       stepFoodBuffs(dt);
       stepCoconutShockwaves(dt);
     }
+    stepParticles(dt);
 
     if (p1Base.hp !== p1Base.lastHp || p2Base.hp !== p2Base.lastHp) {
       syncBaseMeshes();
@@ -4504,6 +4737,13 @@ function animate() {
 
     updateBossSpawnEffects(dt);
 
+    if (spamLockUntil > 0 && battleClock >= spamLockUntil) {
+      spamLockUntil = 0;
+      $('choices').style.visibility = 'visible';
+      ($('type-input') as HTMLInputElement).disabled = false;
+      showQuizMsg('');
+    }
+
     if (quizMsgTimer > 0) {
       quizMsgTimer -= dt;
       if (quizMsgTimer <= 0) $('quiz-msg').textContent = '';
@@ -4511,6 +4751,8 @@ function animate() {
 
     updateHud();
   }
+
+  if (!battleActive && activeParticles.length > 0) activeParticles.length = 0;
 
   if (quizEventActive) {
     quizEventPhaseTimer -= dt;
