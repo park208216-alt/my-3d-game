@@ -2996,6 +2996,84 @@ let isTypingMode = false;
 
 // 2P socket state
 const socketUrl = (import.meta.env.VITE_SOCKET_URL as string | undefined) ?? window.location.origin;
+const APPS_SCRIPT_URL = (import.meta.env.VITE_APPS_SCRIPT_URL as string | undefined) ?? '';
+
+// ─── Vocab Ad ────────────────────────────────────────────────────────────────
+interface AdWord { word: string; meaning: string; }
+let adWordCache: AdWord[] = [];
+
+async function prefetchAdWords() {
+  if (!APPS_SCRIPT_URL) return;
+  try {
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=getRandomWords&count=8`);
+    if (res.ok) adWordCache = await res.json();
+  } catch (e) { /* 실패해도 무시 */ }
+}
+
+function showVocabAd(onClose: () => void) {
+  if (adWordCache.length < 3) { onClose(); return; }
+  const words = adWordCache;
+
+  const overlay = $('vocab-ad-overlay') as HTMLElement;
+  const skipBtn = $('ad-skip-btn') as HTMLButtonElement;
+  const progressBar = $('ad-progress-bar') as HTMLElement;
+  const wordNum = $('ad-word-num') as HTMLElement;
+  const wordEn = $('ad-word-en') as HTMLElement;
+  const wordKo = $('ad-word-ko') as HTMLElement;
+  const timerText = $('ad-timer-text') as HTMLElement;
+
+  overlay.style.display = 'flex';
+  adWordCache = []; // 다음 전투용 캐시 초기화
+
+  const TOTAL_SEC = 30;
+  const PER_WORD_SEC = Math.floor(TOTAL_SEC / words.length);
+  let wordIdx = 0;
+  let secondsLeft = TOTAL_SEC;
+  let wordTimer = 0;
+  let skipAllowed = false;
+
+  // 5초 후 건너뛰기 버튼 표시
+  skipBtn.style.display = 'none';
+  setTimeout(() => { skipBtn.style.display = 'block'; skipAllowed = true; }, 5000);
+
+  skipBtn.onclick = () => {
+    if (!skipAllowed) return;
+    clearInterval(ticker);
+    overlay.style.display = 'none';
+    onClose();
+  };
+
+  function showWord(idx: number) {
+    const w = words[idx];
+    wordNum.textContent = `${idx + 1} / ${words.length}`;
+    wordEn.textContent = w.word;
+    wordKo.style.opacity = '0';
+    wordKo.textContent = w.meaning;
+    // 1.2초 후 뜻 페이드인
+    setTimeout(() => { wordKo.style.opacity = '1'; }, 1200);
+  }
+
+  showWord(0);
+
+  const ticker = setInterval(() => {
+    secondsLeft--;
+    wordTimer++;
+    progressBar.style.width = `${(secondsLeft / TOTAL_SEC) * 100}%`;
+    timerText.textContent = `${secondsLeft}초 후 자동으로 닫힙니다`;
+
+    if (wordTimer >= PER_WORD_SEC && wordIdx < words.length - 1) {
+      wordIdx++;
+      wordTimer = 0;
+      showWord(wordIdx);
+    }
+
+    if (secondsLeft <= 0) {
+      clearInterval(ticker);
+      overlay.style.display = 'none';
+      onClose();
+    }
+  }, 1000);
+}
 const socket = io(socketUrl, {
   path: '/socket.io',
   transports: ['websocket', 'polling'],  // polling fallback for restrictive networks
@@ -3170,6 +3248,34 @@ document.body.insertAdjacentHTML('beforeend', `
     </div>
     <div id="lobby-status" style="font-size:13px;opacity:0.8;min-height:20px;"></div>
     <button class="btn" id="btn-lobby-back" style="margin-top:14px;opacity:0.72;">← 돌아가기</button>
+  </div>
+</div>
+
+<!-- VOCAB AD OVERLAY -->
+<div id="vocab-ad-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.92);flex-direction:column;align-items:center;justify-content:center;gap:0;">
+  <!-- 상단 라벨 -->
+  <div style="width:100%;max-width:420px;display:flex;justify-content:space-between;align-items:center;padding:10px 16px 6px;">
+    <span style="font-size:11px;color:rgba(255,255,255,0.35);letter-spacing:1px;">오늘의 단어</span>
+    <button id="ad-skip-btn" style="display:none;font-size:12px;color:rgba(255,255,255,0.5);background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;padding:4px 10px;cursor:pointer;">건너뛰기</button>
+  </div>
+  <!-- 진행바 -->
+  <div style="width:100%;max-width:420px;padding:0 16px 14px;">
+    <div style="height:3px;background:rgba(255,255,255,0.1);border-radius:99px;overflow:hidden;">
+      <div id="ad-progress-bar" style="height:100%;width:100%;background:#4ade80;border-radius:99px;transition:width 1s linear;"></div>
+    </div>
+  </div>
+  <!-- 단어 카드 -->
+  <div style="width:100%;max-width:420px;padding:0 16px;flex:1;display:flex;align-items:center;justify-content:center;">
+    <div style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:40px 28px;text-align:center;">
+      <div id="ad-word-num" style="font-size:12px;color:rgba(255,255,255,0.35);margin-bottom:16px;letter-spacing:1px;"></div>
+      <div id="ad-word-en" style="font-size:clamp(28px,8vw,44px);font-weight:900;color:#fff;margin-bottom:20px;letter-spacing:1px;"></div>
+      <div style="width:40px;height:2px;background:rgba(255,255,255,0.2);margin:0 auto 20px;"></div>
+      <div id="ad-word-ko" style="font-size:clamp(16px,5vw,24px);font-weight:600;color:#a0ffb8;opacity:0;transition:opacity 0.6s;"></div>
+    </div>
+  </div>
+  <!-- 하단 카운트다운 -->
+  <div style="width:100%;max-width:420px;padding:14px 16px 20px;text-align:center;">
+    <span id="ad-timer-text" style="font-size:13px;color:rgba(255,255,255,0.4);"></span>
   </div>
 </div>
 
@@ -3820,6 +3926,7 @@ async function startBattle() {
   applyTeamTheme();
   pickNewWord();
   updateHud();
+  prefetchAdWords(); // 전투 시작과 동시에 백그라운드에서 단어 미리 받아둠
   showScreen('battle');
   updateCamera();
 }
@@ -4109,7 +4216,8 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
     wordsEl.style.display = 'none';
   }
 
-  showScreen('result');
+  // 광고 → 결과화면 순서
+  showVocabAd(() => showScreen('result'));
 }
 
 // ─── Word Quiz ────────────────────────────────────────────────────────────────
