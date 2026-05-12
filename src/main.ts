@@ -648,8 +648,8 @@ interface Projectile {
   hitEnemies?: Set<string>;
 }
 
-const SIEGE_COST = 10;
-const SIEGE_UPGRADE_COST = 6;
+const SIEGE_COST = 18;
+const SIEGE_UPGRADE_COST = 14;
 const BALLISTA_RANGE = 10;
 const CATAPULT_RANGE = 10;
 const BOULDER_GRAVITY = 20;
