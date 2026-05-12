@@ -35,7 +35,10 @@ export async function loadProfile(userId: string): Promise<UserProfile | null> {
 
 export async function saveProfile(userId: string, profile: UserProfile): Promise<{ ok: boolean; message?: string }> {
   console.log('[saveProfile] upsert start', { userId, gold: profile.gold, deckLen: profile.deck.length, ownedLen: profile.owned_animals.length });
-  const { error } = await supabase.from('profiles').upsert({ id: userId, ...profile });
+  const { error } = await supabase
+    .from('profiles')
+    .upsert({ id: userId, ...profile }, { onConflict: 'id' })
+    .select();
   if (error) {
     console.error('[saveProfile] FAILED', error.code, error.message, error.details, error.hint);
     return { ok: false, message: `${error.code}: ${error.message}` };
