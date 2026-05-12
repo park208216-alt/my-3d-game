@@ -33,9 +33,15 @@ export async function loadProfile(userId: string): Promise<UserProfile | null> {
   return { gold: data.gold ?? 0, deck: data.deck ?? DEFAULT_DECK, owned_animals: data.owned_animals ?? DEFAULT_DECK };
 }
 
-export async function saveProfile(userId: string, profile: UserProfile): Promise<boolean> {
+export async function saveProfile(userId: string, profile: UserProfile): Promise<{ ok: boolean; message?: string }> {
+  console.log('[saveProfile] upsert start', { userId, gold: profile.gold, deckLen: profile.deck.length, ownedLen: profile.owned_animals.length });
   const { error } = await supabase.from('profiles').upsert({ id: userId, ...profile });
-  return !error;
+  if (error) {
+    console.error('[saveProfile] FAILED', error.code, error.message, error.details, error.hint);
+    return { ok: false, message: `${error.code}: ${error.message}` };
+  }
+  console.log('[saveProfile] OK');
+  return { ok: true };
 }
 
 export async function ensureProfile(userId: string): Promise<UserProfile> {

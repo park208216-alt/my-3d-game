@@ -4400,10 +4400,22 @@ $('btn-home-save').addEventListener('click', async () => {
   const btn = $('btn-home-save') as HTMLButtonElement;
   btn.textContent = '저장 중...';
   btn.disabled = true;
-  const ok = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...playerOwnedAnimals] });
-  btn.textContent = ok ? '저장 완료 ✓' : '저장 실패';
+  const result = await saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...playerOwnedAnimals] });
+  if (result.ok) {
+    btn.textContent = '저장 완료';
+    btn.style.color = '#a0ffb8';
+  } else {
+    btn.textContent = '저장 실패';
+    btn.style.color = '#ff8888';
+    // 오류 메시지 잠깐 표시
+    const errDiv = document.createElement('div');
+    errDiv.style.cssText = 'font-size:11px;color:#ff8888;margin-top:4px;text-align:center;max-width:240px;';
+    errDiv.textContent = result.message ?? '알 수 없는 오류';
+    btn.insertAdjacentElement('afterend', errDiv);
+    setTimeout(() => errDiv.remove(), 5000);
+  }
   btn.disabled = false;
-  setTimeout(() => { btn.textContent = '진행상황 저장하기'; }, 2000);
+  setTimeout(() => { btn.textContent = '진행상황 저장하기'; btn.style.color = ''; }, 2000);
 });
 
 // Deck
