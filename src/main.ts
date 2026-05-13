@@ -2554,6 +2554,8 @@ let camPanActive = false;
 let camPanLastDelta = 0; // last frame's pan delta for inertia kick
 type CamMode = 'side' | 'top';
 let camMode: CamMode = 'side';
+let camZoomLevel = 0.5;       // 0 = far, 1 = close
+let camZoomSliderVisible = false;
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   camPanActive = true;
@@ -3821,6 +3823,17 @@ document.body.insertAdjacentHTML('beforeend', `
 </div>
 `);
 
+// ─── Camera Zoom Slider ───────────────────────────────────────────────────────
+document.body.insertAdjacentHTML('beforeend', `
+<div id="cam-zoom-panel" style="display:none;position:fixed;right:10px;top:50%;transform:translateY(-50%);z-index:150;width:36px;height:220px;background:rgba(8,14,30,0.88);border-radius:18px;border:1px solid rgba(255,255,255,0.2);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;box-shadow:0 2px 12px rgba(0,0,0,0.5);">
+  <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">+</span>
+  <div id="cam-zoom-track" style="flex:1;width:6px;background:rgba(255,255,255,0.12);border-radius:3px;position:relative;cursor:pointer;">
+    <div id="cam-zoom-handle" style="width:22px;height:22px;background:#41c1ff;border-radius:50%;position:absolute;left:50%;transform:translate(-50%,-50%);top:50%;cursor:grab;box-shadow:0 0 8px rgba(65,193,255,0.6);touch-action:none;"></div>
+  </div>
+  <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">-</span>
+</div>
+`);
+
 // ─── Loading Overlay ──────────────────────────────────────────────────────────
 document.body.insertAdjacentHTML('beforeend', `
 <div id="loading-overlay" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(8,14,30,0.96);align-items:center;justify-content:center;flex-direction:column;gap:16px;">
@@ -4303,9 +4316,49 @@ function playerUseFood(foodId: string) {
 });
 
 $('btn-cammode').addEventListener('click', () => {
-  camMode = camMode === 'side' ? 'top' : 'side';
-  ($('btn-cammode') as HTMLButtonElement).textContent = camMode === 'top' ? '👁 측면' : '👁 시점';
+  camZoomSliderVisible = !camZoomSliderVisible;
+  const panel = $('cam-zoom-panel') as HTMLElement;
+  panel.style.display = camZoomSliderVisible ? 'flex' : 'none';
+  ($('btn-cammode') as HTMLButtonElement).style.background = camZoomSliderVisible
+    ? 'rgba(65,193,255,0.25)' : 'rgba(255,255,255,0.08)';
 });
+
+// Zoom slider drag logic
+{
+  const track = $('cam-zoom-track') as HTMLElement;
+  const handle = $('cam-zoom-handle') as HTMLElement;
+  let dragging = false;
+
+  function updateHandleFromZoom() {
+    handle.style.top = ((1 - camZoomLevel) * 100) + '%';
+  }
+
+  function setZoomFromPointer(clientY: number) {
+    const rect = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    camZoomLevel = 1 - pct; // invert: top = zoom in
+    updateHandleFromZoom();
+  }
+
+  handle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    e.stopPropagation();
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    setZoomFromPointer(e.clientY);
+  });
+  handle.addEventListener('pointerup', () => { dragging = false; });
+  handle.addEventListener('pointercancel', () => { dragging = false; });
+  // Click anywhere on track also jumps
+  track.addEventListener('pointerdown', (e) => {
+    setZoomFromPointer(e.clientY);
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+  });
+  updateHandleFromZoom();
+}
 
 // ─── Battle Init ──────────────────────────────────────────────────────────────
 function clearBattle() {
@@ -4370,7 +4423,9 @@ async function startBattle() {
   $('quiz-event-overlay').style.display = 'none';
   camPan = 0;
   camMode = 'side';
-  ($('btn-cammode') as HTMLButtonElement).textContent = '👁 시점';
+  camZoomSliderVisible = false;
+  ($('cam-zoom-panel') as HTMLElement).style.display = 'none';
+  ($('btn-cammode') as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)';
   round = 1;
   roundTimer = ROUND_DURATION;
   aiSpawnTimer = AI_ROUNDS[0].interval;
@@ -4414,16 +4469,16 @@ async function startBattle() {
 
 // ─── Camera Update ────────────────────────────────────────────────────────────
 function updateCamera(dt = 0) {
+  // camZoomLevel: 0=far, 1=close
+  const zoomT = camZoomLevel;
+
   if (camMode === 'top') {
-    // Bird's-eye: straight down over field center, field appears horizontal
-    // camera.up X-axis → Z-axis runs left-right on screen
-    // p1 base (z=SPAWN_P1, small) on right → up = (-1,0,0)
-    // p2 base (z=SPAWN_P2, large) on right → up = (+1,0,0)
+    const topY = 55 - zoomT * 32; // far=55, close=23
     camera.fov = 72;
     camera.updateProjectionMatrix();
     camera.up.set(localSide === 'p1' ? -1 : 1, 0, 0);
     const midZ = (SPAWN_P1 + SPAWN_P2) / 2;
-    camera.position.set(0, 38, midZ);
+    camera.position.set(0, topY, midZ);
     camera.lookAt(0, 0, midZ);
     return;
   }
@@ -4433,13 +4488,14 @@ function updateCamera(dt = 0) {
 
   // Portrait mode: wider FOV so more of the field fits on screen
   const isPortrait = window.innerHeight > window.innerWidth;
-  const targetFov = isPortrait ? 80 : 65;
-  if (camera.fov !== targetFov) { camera.fov = targetFov; camera.updateProjectionMatrix(); }
+  const baseFov = isPortrait ? 80 : 65;
+  // Zoom: reduce FOV and pull camera closer
+  const fov = baseFov - zoomT * 30; // far=baseFov, close=baseFov-30
+  if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
 
   // Pan limits: generous forward (enemy side) range, tighter backward range
-  // P1 moves +Z toward enemy; P2 moves -Z toward enemy
-  const panFwd  = isPortrait ? 30 : 26;  // toward enemy (more room needed on portrait)
-  const panBack = isPortrait ? 12 : 10;  // toward own base
+  const panFwd  = isPortrait ? 30 : 26;
+  const panBack = isPortrait ? 12 : 10;
   const panMin = localSide === 'p1' ? -panBack : -panFwd;
   const panMax = localSide === 'p1' ?  panFwd  :  panBack;
 
@@ -4454,12 +4510,13 @@ function updateCamera(dt = 0) {
 
   const baseZ = localSide === 'p1' ? FIELD_LEN * 0.33 : FIELD_LEN * 0.67;
   const lookZ = baseZ + camPan;
-  const camH = isPortrait ? 7 : 5;
+  const camH = (isPortrait ? 7 : 5) - zoomT * 2; // zoom in lowers camera slightly
+  const camDist = (isPortrait ? 8 : 8) - zoomT * 4; // zoom in pulls closer
   if (localSide === 'p1') {
-    camera.position.set(8, camH, lookZ);
+    camera.position.set(camDist, camH, lookZ);
     camera.lookAt(0, 3, lookZ);
   } else {
-    camera.position.set(-8, camH, lookZ);
+    camera.position.set(-camDist, camH, lookZ);
     camera.lookAt(0, 3, lookZ);
   }
 }
