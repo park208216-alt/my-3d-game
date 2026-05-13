@@ -5312,12 +5312,13 @@ $('btn-gamble-roll').addEventListener('click', () => {
   const success = roll < gambleSuccessRate;
 
   if (success) {
-    playerGold += bet; // win = get bet back + bet = 2x
+    playerGold += bet;
     resultEl.textContent = `성공! +${bet.toLocaleString()} G (${gambleSuccessRate.toFixed(1)}% 확률)`;
     resultEl.style.color = '#4ade80';
   } else {
     playerGold -= bet;
-    resultEl.textContent = `실패... -${bet.toLocaleString()} G`;
+    gambleSuccessRate = 1.0;
+    resultEl.textContent = `실패... -${bet.toLocaleString()} G (확률 1%로 초기화)`;
     resultEl.style.color = '#f87171';
   }
   ($('gamble-bet-input') as HTMLInputElement).value = '';
