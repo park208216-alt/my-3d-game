@@ -4423,7 +4423,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 </div>
 
 <!-- LEADERBOARD -->
-<div id="screen-leaderboard" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;background:rgba(6,10,20,0.97);">
+<div id="screen-leaderboard" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;">
   <div style="width:100%;max-width:480px;padding:16px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
       <button class="btn" id="btn-lb-back" style="padding:8px 14px;font-size:13px;">← 돌아가기</button>
