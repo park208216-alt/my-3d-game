@@ -148,7 +148,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 1000, atk: 40, spd: 0.3, atkCooldown: 1, range: 10,
-    modelScale: 0.0170, collisionSize: 3.0,
+    modelScale: 0.0119, collisionSize: 3.0,
     aoe: 4,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
@@ -3273,7 +3273,8 @@ let p1DragonKilled = false;
 // Dragon system
 let dragonAlive = false;
 let dragonUnit: UnitSim | null = null;
-let dragonNextQuizHp = 900;      // trigger quiz at each 100hp lost
+let dragonNextQuizHp = 750;      // trigger quiz at 75%/50%/25% HP
+let dragonQuizCount = 0;         // max 3 quizzes per dragon
 let dragonPostKillTimer = -1;    // countdown to random boss after death
 let dragonAttackCount = 0;       // tracks hits; every 10th = super attack
 let dragonQuizActive = false;
@@ -4390,9 +4391,10 @@ function clearBattle() {
   // Dragon system reset
   dragonAlive = false;
   dragonUnit = null;
-  dragonNextQuizHp = 900;
+  dragonNextQuizHp = 750; dragonQuizCount = 0;
   dragonPostKillTimer = -1;
   dragonAttackCount = 0;
+  dragonQuizCount = 0;
   dragonQuizActive = false;
   ($('dragon-quiz-overlay') as HTMLElement).style.display = 'none';
   ($('dragon-hp-bar') as HTMLElement).style.display = 'none';
@@ -4676,7 +4678,7 @@ function checkBossThresholds() {
         dragonBgm.currentTime = 0;
         dragonBgm.play().catch(() => {});
         dragonAlive = true;
-        dragonNextQuizHp = 900;
+        dragonNextQuizHp = 750; dragonQuizCount = 0;
         dragonUnit = units[units.length - 1]; // just pushed by spawnBoss
         ($('dragon-hp-bar') as HTMLElement).style.display = 'block';
         // Dragon also gets siege weapons
@@ -4881,7 +4883,7 @@ function finishDragonQuiz() {
   const c = dragonQuizCorrectCount;
   if (c === 0) {
     dragonUnit.hp = dragonUnit.maxHp;
-    dragonNextQuizHp = 900;
+    dragonNextQuizHp = 750; dragonQuizCount = 0;
     if (dragonUnit.hpSprite) refreshHpSprite(dragonUnit.hpSprite, dragonUnit.hp, dragonUnit.maxHp);
     dragonUnit.lastHp = -1;
   } else if (c === 1) {
@@ -5868,8 +5870,9 @@ function animate() {
       ($('dragon-hp-fill') as HTMLElement).style.width = hpPct + '%';
       ($('dragon-hp-text') as HTMLElement).textContent = `${dragonUnit.hp}/${dragonUnit.maxHp}`;
       // Check 10% HP threshold for quiz
-      if (!dragonQuizActive && dragonUnit.hp <= dragonNextQuizHp && dragonNextQuizHp > 0) {
-        dragonNextQuizHp -= 100;
+      if (!dragonQuizActive && dragonQuizCount < 3 && dragonUnit.hp <= dragonNextQuizHp && dragonNextQuizHp > 0) {
+        dragonNextQuizHp -= 250;
+        dragonQuizCount++;
         triggerDragonQuiz();
       }
     }
