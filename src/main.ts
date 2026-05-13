@@ -4638,8 +4638,8 @@ function submitQuizEventChoice(idx: number) {
   const res = $('qe-result') as HTMLElement;
   res.style.display = 'flex';
   if (correct) {
-    res.innerHTML = '정답!<br><span style="font-size:16px;color:#a0ffb8;">+15 재화 지급</span>';
-    addCurrency(15);
+    res.innerHTML = '정답!<br><span style="font-size:16px;color:#a0ffb8;">+5 재화 지급</span>';
+    addCurrency(5);
     addWordLog(quizEventQuestion!.english, quizEventQuestion!.korean);
   } else {
     res.innerHTML = `오답<br><span style="font-size:14px;color:#ffb0b0;">정답: ${correctMeaning}</span>`;
