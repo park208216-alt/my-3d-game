@@ -147,7 +147,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   },
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
-    hp: 500, atk: 40, spd: 2, atkCooldown: 2.5, range: 10,
+    hp: 1000, atk: 40, spd: 1, atkCooldown: 1, range: 10,
     modelScale: 0.0170, collisionSize: 3.0,
     aoe: 4,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
@@ -255,6 +255,65 @@ function updateBossSpawnEffects(dt: number) {
     if (t >= 1) { scene.remove(e.ring); bossSpawnEffects.splice(i, 1); continue; }
     e.ring.scale.setScalar(1 + MAX_SCALE * t);
     e.mat.opacity = 1 - t;
+  }
+}
+
+function setNightMode() {
+  scene.background = new THREE.Color(0x060208);
+  scene.fog = new THREE.Fog(0x150308, 18, 55);
+  if (groundMat) groundMat.color.set(0x1a0803);
+  if (laneMat) laneMat.color.set(0x0f0402);
+}
+
+function setDayMode() {
+  scene.background = new THREE.Color(0x87ceeb);
+  scene.fog = new THREE.Fog(0xb0dff0, 40, 90);
+  if (groundMat) groundMat.color.set(0x6db84a);
+  if (laneMat) laneMat.color.set(0x5a4020);
+}
+
+function triggerDragonSpawnEffect(z: number) {
+  // Multiple expanding rings in fire colors
+  const colors = [0xffffff, 0xffcc00, 0xff9900, 0xff4400, 0xcc0000];
+  for (let i = 0; i < colors.length; i++) {
+    setTimeout(() => {
+      if (!battleActive) return;
+      const geo = new THREE.RingGeometry(0.1, 2, 64);
+      const mat = new THREE.MeshBasicMaterial({ color: colors[i], transparent: true, opacity: 1, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(0, 0.1 + i * 0.03, z);
+      scene.add(ring);
+      bossSpawnEffects.push({ ring, mat, age: 0 });
+    }, i * 100);
+  }
+  // Burst fire particles
+  const pos = new THREE.Vector3(0, 1, z);
+  for (let i = 0; i < 6; i++) {
+    setTimeout(() => {
+      if (!battleActive) return;
+      spawnParticles(pos, 0xff4400, 25, 9, 1.2);
+      spawnParticles(pos, 0xffaa00, 15, 7, 0.9);
+    }, i * 80);
+  }
+}
+
+function spawnFloorFire(z: number) {
+  const geo = new THREE.PlaneGeometry(4, 4);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.65, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(0, 0.06, z);
+  scene.add(mesh);
+  floorFires.push({ mesh, mat, age: 0 });
+}
+
+function updateFloorFires(dt: number) {
+  for (let i = floorFires.length - 1; i >= 0; i--) {
+    const f = floorFires[i];
+    f.age += dt;
+    f.mat.opacity = 0.65 * Math.max(0, 1 - f.age);
+    if (f.age >= 1.0) { scene.remove(f.mesh); f.mesh.geometry.dispose(); floorFires.splice(i, 1); }
   }
 }
 
@@ -2466,23 +2525,21 @@ renderer.domElement.addEventListener('pointercancel', () => {
 });
 
 // ─── Field Geometry ───────────────────────────────────────────────────────────
+let groundMat: THREE.MeshStandardMaterial | null = null;
+let laneMat: THREE.MeshStandardMaterial | null = null;
+
 function buildField() {
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(20, FIELD_LEN + 20),
-    new THREE.MeshStandardMaterial({ color: 0x6db84a, roughness: 0.9 })
-  );
+  groundMat = new THREE.MeshStandardMaterial({ color: 0x6db84a, roughness: 0.9 });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(20, FIELD_LEN + 20), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(0, -0.01, FIELD_LEN / 2);
   scene.add(ground);
 
-  const lane = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.8, FIELD_LEN + 4),
-    new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 1.0 })
-  );
+  laneMat = new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 1.0 });
+  const lane = new THREE.Mesh(new THREE.PlaneGeometry(2.8, FIELD_LEN + 4), laneMat);
   lane.rotation.x = -Math.PI / 2;
   lane.position.set(0, 0.005, FIELD_LEN / 2);
   scene.add(lane);
-
 }
 buildField();
 
@@ -2770,6 +2827,13 @@ function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allE
         dealDamage(attacker, e, atk, now);
       }
     }
+  }
+  // Dragon fire breath visual
+  if (attacker.animalId === 'dragon') {
+    const hitPos = new THREE.Vector3(primary.x, 0.5, primary.z);
+    spawnParticles(hitPos, 0xff4400, 20, 6, 0.8);
+    spawnParticles(hitPos, 0xffaa00, 12, 4, 0.6);
+    spawnFloorFire(primary.z);
   }
 }
 
@@ -3069,7 +3133,20 @@ function syncUnitMeshes() {
     if (gameMode === '1p' && u.side === 'p2' && battleActive) {
       if (u.animalId in BOSS_DEFS) {
         p1BossesKilled++;
-        if (u.animalId === 'dragon') p1DragonKilled = true;
+        if (u.animalId === 'dragon') {
+          p1DragonKilled = true;
+          dragonAlive = false;
+          dragonUnit = null;
+          dragonQuizActive = false;
+          ($('dragon-quiz-overlay') as HTMLElement).style.display = 'none';
+          ($('dragon-hp-bar') as HTMLElement).style.display = 'none';
+          setDayMode();
+          dragonBgm.pause();
+          dragonBgm.currentTime = 0;
+          battleBgm.currentTime = 0;
+          battleBgm.play().catch(() => {});
+          dragonPostKillTimer = 30;
+        }
       } else if (u.animalId.startsWith('m_')) {
         p1MonstersKilled++;
       }
@@ -3123,6 +3200,23 @@ let correctIdx = 0;
 let p1MonstersKilled = 0;
 let p1BossesKilled = 0;
 let p1DragonKilled = false;
+
+// Dragon system
+let dragonAlive = false;
+let dragonUnit: UnitSim | null = null;
+let dragonNextQuizHp = 900;      // trigger quiz at each 100hp lost
+let dragonPostKillTimer = -1;    // countdown to random boss after death
+let dragonQuizActive = false;
+let dragonQuizPhase: 'memorize' | 'answer' = 'memorize';
+let dragonQuizWords: { english: string; korean: string; answers: string[] }[] = [];
+let dragonQuizMemTimer = 10;
+let dragonQuizAnswerIdx = 0;
+let dragonQuizCorrectCount = 0;
+
+// Floor fires (dragon fire breath)
+interface FloorFire { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; age: number; }
+const floorFires: FloorFire[] = [];
+
 let correctWords: { en: string; ko: string }[] = [];
 let wrongWords = 0;
 let spamWrongLog: number[] = []; // timestamps of recent wrong answers
@@ -3561,6 +3655,34 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
 </div>
 
+<!-- Dragon HP bar (shown while dragon is alive) -->
+<div id="dragon-hp-bar" style="display:none;position:fixed;top:65px;left:0;right:0;z-index:99;background:rgba(30,3,3,0.93);padding:4px 14px;border-bottom:2px solid #ff4400;border-top:1px solid #440000;">
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span style="color:#ff4400;font-weight:900;font-size:14px;text-shadow:0 0 8px #ff4400;">드래곤</span>
+    <div style="flex:1;height:14px;background:#1a0505;border-radius:7px;overflow:hidden;border:1px solid #660000;">
+      <div id="dragon-hp-fill" style="height:100%;width:100%;background:linear-gradient(90deg,#cc0000,#ff4400,#ff8800);border-radius:7px;transition:width 0.15s;"></div>
+    </div>
+    <span id="dragon-hp-text" style="color:#ffa0a0;font-size:12px;min-width:70px;text-align:right;font-variant-numeric:tabular-nums;">1000/1000</span>
+  </div>
+</div>
+
+<!-- Dragon Quiz Overlay -->
+<div id="dragon-quiz-overlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;flex-direction:column;">
+  <div style="background:rgba(25,4,4,0.97);border:2px solid #ff4400;border-radius:16px;padding:24px 28px;max-width:460px;width:92%;text-align:center;box-shadow:0 0 40px rgba(255,68,0,0.5);">
+    <div style="color:#ff6600;font-size:22px;font-weight:900;margin-bottom:4px;text-shadow:0 0 10px #ff4400;">드래곤 퀴즈!</div>
+    <div id="dq-memorize" style="display:block;">
+      <div style="color:#aaa;font-size:13px;margin-bottom:12px;"><span id="dq-timer" style="color:#ffd700;font-weight:700;font-size:18px;">10</span>초 안에 암기하세요</div>
+      <div id="dq-words" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+    <div id="dq-answer" style="display:none;">
+      <div style="color:#aaa;font-size:13px;margin-bottom:10px;">단어의 한국어 뜻을 입력하세요</div>
+      <div id="dq-english" style="font-size:28px;font-weight:900;color:#7ad7f0;margin-bottom:16px;letter-spacing:2px;"></div>
+      <input id="dq-input" placeholder="한글 뜻 입력 후 Enter" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ff6600;background:rgba(20,5,5,0.9);color:#fff;font-size:16px;outline:none;box-sizing:border-box;">
+      <div id="dq-progress" style="color:#888;font-size:12px;margin-top:8px;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- TOP HUD (HP bars + timer) — 적 기지 왼쪽 / 내 기지 오른쪽 고정 -->
 <div id="top-hud" style="display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(0,0,0,0.80);padding:6px 14px;">
   <div style="display:flex;align-items:center;gap:10px;">
@@ -3654,6 +3776,10 @@ const battleBgm = new Audio(`${import.meta.env.BASE_URL}battle-bgm.mp3`);
 battleBgm.loop = true;
 battleBgm.volume = 0.45;
 
+const dragonBgm = new Audio(`${import.meta.env.BASE_URL}dragon-bgm.mp3`);
+dragonBgm.loop = true;
+dragonBgm.volume = 0.5;
+
 // ─── Sound Effects (Web Audio API) ───────────────────────────────────────────
 let _actx: AudioContext | null = null;
 const actx = () => { if (!_actx) _actx = new AudioContext(); if (_actx.state === 'suspended') _actx.resume(); return _actx; };
@@ -3713,6 +3839,8 @@ function showScreen(s: Screen) {
   } else {
     battleBgm.pause();
     battleBgm.currentTime = 0;
+    dragonBgm.pause();
+    dragonBgm.currentTime = 0;
     bgm.play().catch(() => {}); // 브라우저 autoplay 정책 무시
   }
 
@@ -4119,6 +4247,19 @@ function clearBattle() {
   p1MonstersKilled = 0;
   p1BossesKilled = 0;
   p1DragonKilled = false;
+  // Dragon system reset
+  dragonAlive = false;
+  dragonUnit = null;
+  dragonNextQuizHp = 900;
+  dragonPostKillTimer = -1;
+  dragonQuizActive = false;
+  ($('dragon-quiz-overlay') as HTMLElement).style.display = 'none';
+  ($('dragon-hp-bar') as HTMLElement).style.display = 'none';
+  for (const f of floorFires) scene.remove(f.mesh);
+  floorFires.length = 0;
+  setDayMode();
+  dragonBgm.pause();
+  dragonBgm.currentTime = 0;
   correctWords = [];
   wrongWords = 0;
   spamWrongLog = [];
@@ -4374,19 +4515,37 @@ function checkBossThresholds() {
       console.log(`[Boss] threshold triggered! p2Base.hp=${hp} <= ${threshold}, spawning ${bossId}`);
       bossSpawned[bossId] = true;
       spawnBoss(bossId);
-      // 보스 등장 이펙트 + 적 기지 주변 p1 유닛에 20 데미지 (공중/지상 모두)
-      triggerBossSpawnEffect(p2Base.z);
+
       const SPAWN_BLAST_RADIUS = 16;
-      for (const u of units) {
-        if (u.side === 'p1' && u.state !== 'dead' && Math.abs(u.z - p2Base.z) <= SPAWN_BLAST_RADIUS) {
-          u.hp = Math.max(0, u.hp - 20);
-          if (u.hp <= 0) u.state = 'dead';
-        }
-      }
-      // 드래곤 등장 시 적 기지 옆에 발리스타 + 박격포 설치
       if (bossId === 'dragon') {
+        // Dragon: instant-kill all p1 units in radius + flashy effect + night mode + BGM
+        for (const u of units) {
+          if (u.side === 'p1' && u.state !== 'dead' && Math.abs(u.z - p2Base.z) <= SPAWN_BLAST_RADIUS) {
+            u.hp = 0;
+            u.state = 'dead';
+          }
+        }
+        triggerDragonSpawnEffect(p2Base.z);
+        setNightMode();
+        battleBgm.pause();
+        dragonBgm.currentTime = 0;
+        dragonBgm.play().catch(() => {});
+        dragonAlive = true;
+        dragonNextQuizHp = 900;
+        dragonUnit = units[units.length - 1]; // just pushed by spawnBoss
+        ($('dragon-hp-bar') as HTMLElement).style.display = 'block';
+        // Dragon also gets siege weapons
         placeSiege('ballista', 'p2');
         placeSiege('catapult', 'p2');
+      } else {
+        // Regular boss: 20 damage blast
+        for (const u of units) {
+          if (u.side === 'p1' && u.state !== 'dead' && Math.abs(u.z - p2Base.z) <= SPAWN_BLAST_RADIUS) {
+            u.hp = Math.max(0, u.hp - 20);
+            if (u.hp <= 0) u.state = 'dead';
+          }
+        }
+        triggerBossSpawnEffect(p2Base.z);
       }
     }
   }
@@ -4526,6 +4685,86 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
   // 광고 → 결과화면 순서
   showVocabAd(() => showScreen('result'));
 }
+
+// ─── Dragon Quiz ──────────────────────────────────────────────────────────────
+function triggerDragonQuiz() {
+  if (dragonQuizActive) return;
+  dragonQuizActive = true;
+  dragonQuizPhase = 'memorize';
+  dragonQuizMemTimer = 10;
+  dragonQuizAnswerIdx = 0;
+  dragonQuizCorrectCount = 0;
+
+  const indices = new Set<number>();
+  while (indices.size < 3) indices.add(Math.floor(Math.random() * wordList.length));
+  dragonQuizWords = [...indices].map(i => wordList[i]);
+
+  const overlay = $('dragon-quiz-overlay') as HTMLElement;
+  overlay.style.display = 'flex';
+  $('dq-words').innerHTML = dragonQuizWords.map(w =>
+    `<div style="background:rgba(255,100,0,0.1);border:1px solid rgba(255,100,0,0.4);border-radius:8px;padding:8px 14px;text-align:left;">
+      <span style="color:#7ad7f0;font-weight:700;font-size:17px;">${w.english}</span>
+      <span style="color:#ddd;margin-left:12px;font-size:14px;">${w.korean}</span>
+    </div>`
+  ).join('');
+  $('dq-memorize').style.display = 'block';
+  $('dq-answer').style.display = 'none';
+}
+
+function showDragonQuizQuestion() {
+  const w = dragonQuizWords[dragonQuizAnswerIdx];
+  ($('dq-english') as HTMLElement).textContent = w.english;
+  ($('dq-progress') as HTMLElement).textContent = `${dragonQuizAnswerIdx + 1} / ${dragonQuizWords.length}`;
+  const inp = $('dq-input') as HTMLInputElement;
+  inp.value = '';
+  inp.focus();
+}
+
+function finishDragonQuiz() {
+  dragonQuizActive = false;
+  ($('dragon-quiz-overlay') as HTMLElement).style.display = 'none';
+  if (!dragonUnit || dragonUnit.state === 'dead') return;
+
+  const c = dragonQuizCorrectCount;
+  if (c === 0) {
+    // Dragon fully heals
+    dragonUnit.hp = dragonUnit.maxHp;
+    dragonNextQuizHp = 900; // reset thresholds
+    if (dragonUnit.hpSprite) refreshHpSprite(dragonUnit.hpSprite, dragonUnit.hp, dragonUnit.maxHp);
+    dragonUnit.lastHp = -1;
+  } else if (c === 1) {
+    // Dragon gets 3s buff (uses appleBuffed flag)
+    dragonUnit.appleBuffed = true;
+    setTimeout(() => { if (dragonUnit) dragonUnit.appleBuffed = false; }, 3000);
+  } else if (c === 2) {
+    addCurrency(5);
+  } else {
+    // 3 correct: 5 currency + knockback
+    addCurrency(5);
+    dragonUnit.z = Math.min(dragonUnit.z + 22, SPAWN_P2);
+    if (dragonUnit.mesh) dragonUnit.mesh.position.z = dragonUnit.z;
+  }
+}
+
+// Dragon quiz input handler
+let _dqCompositionEnded = false;
+($('dq-input') as HTMLInputElement).addEventListener('compositionend', () => { _dqCompositionEnded = true; });
+($('dq-input') as HTMLInputElement).addEventListener('keydown', (e) => {
+  if (e.code !== 'Enter') return;
+  if (e.isComposing && !_dqCompositionEnded) return;
+  _dqCompositionEnded = false;
+  const typed = (e.target as HTMLInputElement).value.trim();
+  if (!typed) return;
+  const w = dragonQuizWords[dragonQuizAnswerIdx];
+  const correct = w.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
+  if (correct) dragonQuizCorrectCount++;
+  dragonQuizAnswerIdx++;
+  if (dragonQuizAnswerIdx >= dragonQuizWords.length) {
+    finishDragonQuiz();
+  } else {
+    showDragonQuizQuestion();
+  }
+});
 
 // ─── Word Quiz ────────────────────────────────────────────────────────────────
 function pickNewWord() {
@@ -5463,6 +5702,42 @@ function animate() {
     }
 
     updateBossSpawnEffects(dt);
+    updateFloorFires(dt);
+
+    // Dragon per-frame logic
+    if (dragonAlive && dragonUnit && dragonUnit.state !== 'dead') {
+      // Update HP bar
+      const hpPct = Math.max(0, dragonUnit.hp / dragonUnit.maxHp) * 100;
+      ($('dragon-hp-fill') as HTMLElement).style.width = hpPct + '%';
+      ($('dragon-hp-text') as HTMLElement).textContent = `${dragonUnit.hp}/${dragonUnit.maxHp}`;
+      // Check 10% HP threshold for quiz
+      if (!dragonQuizActive && dragonUnit.hp <= dragonNextQuizHp && dragonNextQuizHp > 0) {
+        dragonNextQuizHp -= 100;
+        triggerDragonQuiz();
+      }
+    }
+    // Dragon quiz memorize timer
+    if (dragonQuizActive && dragonQuizPhase === 'memorize') {
+      dragonQuizMemTimer -= dt;
+      ($('dq-timer') as HTMLElement).textContent = String(Math.max(0, Math.ceil(dragonQuizMemTimer)));
+      if (dragonQuizMemTimer <= 0) {
+        dragonQuizPhase = 'answer';
+        $('dq-memorize').style.display = 'none';
+        $('dq-answer').style.display = 'block';
+        showDragonQuizQuestion();
+      }
+    }
+    // Random boss after dragon dies
+    if (dragonPostKillTimer > 0 && gameMode === '1p') {
+      dragonPostKillTimer -= dt;
+      if (dragonPostKillTimer <= 0) {
+        dragonPostKillTimer = 30;
+        const randomBossPool = ['b2_wasp','b2_frog','b2_rat','b2_spider','b2_snake','slime','bat','skeleton'];
+        const rid = randomBossPool[Math.floor(Math.random() * randomBossPool.length)];
+        spawnBoss(rid);
+        triggerBossSpawnEffect(p2Base.z);
+      }
+    }
 
     if (spamLockUntil > 0 && battleClock >= spamLockUntil) {
       spamLockUntil = 0;
