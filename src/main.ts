@@ -148,7 +148,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 1000, atk: 40, spd: 0.3, atkCooldown: 1, range: 10,
-    modelScale: 0.0170, collisionSize: 3.0,
+    modelScale: 0.0085, collisionSize: 3.0,
     aoe: 4,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
@@ -306,6 +306,22 @@ function spawnFloorFire(z: number) {
   mesh.position.set(0, 0.06, z);
   scene.add(mesh);
   floorFires.push({ mesh, mat, age: 0 });
+}
+
+function spawnFireBreathTrail(fromZ: number, toZ: number) {
+  const steps = 7;
+  for (let i = 0; i <= steps; i++) {
+    const delay = i * 25;
+    setTimeout(() => {
+      if (!battleActive) return;
+      const t = i / steps;
+      const z = fromZ + (toZ - fromZ) * t;
+      const y = 1.8 - t * 1.3; // arcs from dragon mouth height down to ground
+      const pos = new THREE.Vector3(0, y, z);
+      spawnParticles(pos, 0xff4400, 6, 3, 0.45);
+      spawnParticles(pos, 0xffcc00, 4, 2, 0.3);
+    }, delay);
+  }
 }
 
 function spawnDragonSuperEffect(z: number) {
@@ -2869,11 +2885,10 @@ function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allE
       }
     }
     if (isSuperAttack) {
+      spawnFireBreathTrail(attacker.z, primary.z);
       spawnDragonSuperEffect(primary.z);
     } else {
-      const hitPos = new THREE.Vector3(primary.x, 0.5, primary.z);
-      spawnParticles(hitPos, 0xff4400, 12, 5, 0.6);
-      spawnParticles(hitPos, 0xffaa00, 8, 3, 0.4);
+      spawnFireBreathTrail(attacker.z, primary.z);
       spawnFloorFire(primary.z);
     }
     return;
@@ -3263,7 +3278,6 @@ let dragonQuizActive = false;
 let dragonQuizPhase: 'memorize' | 'answer' = 'memorize';
 let dragonQuizWords: { english: string; korean: string; answers: string[] }[] = [];
 let dragonQuizMemTimer = 10;
-let dragonQuizAnswerIdx = 0;
 let dragonQuizCorrectCount = 0;
 
 // Floor fires (dragon fire breath)
@@ -3728,10 +3742,10 @@ document.body.insertAdjacentHTML('beforeend', `
       <div id="dq-words" style="display:flex;flex-direction:column;gap:8px;"></div>
     </div>
     <div id="dq-answer" style="display:none;">
-      <div style="color:#aaa;font-size:13px;margin-bottom:10px;">단어의 한국어 뜻을 입력하세요</div>
-      <div id="dq-english" style="font-size:28px;font-weight:900;color:#7ad7f0;margin-bottom:16px;letter-spacing:2px;"></div>
-      <input id="dq-input" placeholder="한글 뜻 입력 후 Enter" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ff6600;background:rgba(20,5,5,0.9);color:#fff;font-size:16px;outline:none;box-sizing:border-box;">
-      <div id="dq-progress" style="color:#888;font-size:12px;margin-top:8px;"></div>
+      <div style="color:#aaa;font-size:12px;margin-bottom:10px;">한국어 뜻을 입력하고 확인을 누르세요</div>
+      <div id="dq-answer-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <button id="dq-confirm" style="margin-top:12px;width:100%;padding:10px;border-radius:8px;border:2px solid #ff6600;background:rgba(255,100,0,0.2);color:#ff9900;font-size:15px;font-weight:900;cursor:pointer;">확인</button>
+      <div id="dq-result-msg" style="display:none;margin-top:10px;font-size:14px;font-weight:700;text-align:center;padding:10px;border-radius:8px;"></div>
     </div>
   </div>
 </div>
@@ -4751,7 +4765,6 @@ function triggerDragonQuiz() {
   dragonQuizActive = true;
   dragonQuizPhase = 'memorize';
   dragonQuizMemTimer = 10;
-  dragonQuizAnswerIdx = 0;
   dragonQuizCorrectCount = 0;
 
   const indices = new Set<number>();
@@ -4771,12 +4784,16 @@ function triggerDragonQuiz() {
 }
 
 function showDragonQuizQuestion() {
-  const w = dragonQuizWords[dragonQuizAnswerIdx];
-  ($('dq-english') as HTMLElement).textContent = w.english;
-  ($('dq-progress') as HTMLElement).textContent = `${dragonQuizAnswerIdx + 1} / ${dragonQuizWords.length}`;
-  const inp = $('dq-input') as HTMLInputElement;
-  inp.value = '';
-  inp.focus();
+  $('dq-answer-list').innerHTML = dragonQuizWords.map((w, i) =>
+    `<div style="display:flex;align-items:center;gap:8px;">
+      <span style="color:#7ad7f0;font-weight:700;font-size:15px;min-width:100px;flex-shrink:0;">${w.english}</span>
+      <input id="dq-ans-${i}" placeholder="한글 뜻" autocomplete="off"
+        style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,100,0,0.5);background:rgba(20,5,5,0.9);color:#fff;font-size:14px;outline:none;">
+    </div>`
+  ).join('');
+  ($('dq-result-msg') as HTMLElement).style.display = 'none';
+  ($('dq-confirm') as HTMLButtonElement).disabled = false;
+  (document.getElementById('dq-ans-0') as HTMLInputElement)?.focus();
 }
 
 function finishDragonQuiz() {
@@ -4786,43 +4803,45 @@ function finishDragonQuiz() {
 
   const c = dragonQuizCorrectCount;
   if (c === 0) {
-    // Dragon fully heals
     dragonUnit.hp = dragonUnit.maxHp;
-    dragonNextQuizHp = 900; // reset thresholds
+    dragonNextQuizHp = 900;
     if (dragonUnit.hpSprite) refreshHpSprite(dragonUnit.hpSprite, dragonUnit.hp, dragonUnit.maxHp);
     dragonUnit.lastHp = -1;
   } else if (c === 1) {
-    // Dragon gets 3s buff (uses appleBuffed flag)
     dragonUnit.appleBuffed = true;
     setTimeout(() => { if (dragonUnit) dragonUnit.appleBuffed = false; }, 3000);
   } else if (c === 2) {
     addCurrency(5);
   } else {
-    // 3 correct: 5 currency + knockback
     addCurrency(5);
     dragonUnit.z = Math.min(dragonUnit.z + 22, SPAWN_P2);
     if (dragonUnit.mesh) dragonUnit.mesh.position.z = dragonUnit.z;
   }
 }
 
-// Dragon quiz input handler
-let _dqCompositionEnded = false;
-($('dq-input') as HTMLInputElement).addEventListener('compositionend', () => { _dqCompositionEnded = true; });
-($('dq-input') as HTMLInputElement).addEventListener('keydown', (e) => {
-  if (e.code !== 'Enter') return;
-  if (e.isComposing && !_dqCompositionEnded) return;
-  _dqCompositionEnded = false;
-  const typed = (e.target as HTMLInputElement).value.trim();
-  if (!typed) return;
-  const w = dragonQuizWords[dragonQuizAnswerIdx];
-  const correct = w.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''));
-  if (correct) dragonQuizCorrectCount++;
-  dragonQuizAnswerIdx++;
-  if (dragonQuizAnswerIdx >= dragonQuizWords.length) {
-    finishDragonQuiz();
-  } else {
-    showDragonQuizQuestion();
+// Dragon quiz confirm button
+($('dq-confirm') as HTMLButtonElement).addEventListener('click', () => {
+  let correct = 0;
+  for (let i = 0; i < dragonQuizWords.length; i++) {
+    const inp = document.getElementById(`dq-ans-${i}`) as HTMLInputElement | null;
+    const typed = (inp?.value ?? '').trim();
+    const w = dragonQuizWords[i];
+    if (w.answers.some(a => a.trim() === typed || a.trim().replace(/\s/g,'') === typed.replace(/\s/g,''))) correct++;
   }
+  dragonQuizCorrectCount = correct;
+  const resultEl = $('dq-result-msg') as HTMLElement;
+  const effects = [
+    '드래곤 HP 완전 회복!',
+    '드래곤 3초 강화 발동!',
+    '재화 +5 지급!',
+    '재화 +5 지급 + 드래곤 넉백!',
+  ];
+  resultEl.textContent = `${correct}개 정답 — ${effects[correct]}`;
+  resultEl.style.display = 'block';
+  resultEl.style.background = correct >= 2 ? 'rgba(0,130,0,0.35)' : 'rgba(150,0,0,0.35)';
+  resultEl.style.color = correct >= 2 ? '#a0ffb8' : '#ffaaaa';
+  ($('dq-confirm') as HTMLButtonElement).disabled = true;
+  setTimeout(finishDragonQuiz, 2500);
 });
 
 // ─── Word Quiz ────────────────────────────────────────────────────────────────
