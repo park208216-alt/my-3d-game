@@ -2555,7 +2555,7 @@ let camPanLastDelta = 0; // last frame's pan delta for inertia kick
 type CamMode = 'side' | 'top';
 let camMode: CamMode = 'side';
 let camZoomLevel = 0.5;       // 0 = far, 1 = close
-let camZoomSliderVisible = false;
+let camZoomSliderVisible = false; // slider body expanded?
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   camPanActive = true;
@@ -3825,12 +3825,17 @@ document.body.insertAdjacentHTML('beforeend', `
 
 // ─── Camera Zoom Slider ───────────────────────────────────────────────────────
 document.body.insertAdjacentHTML('beforeend', `
-<div id="cam-zoom-panel" style="display:none;position:fixed;left:10px;top:50%;transform:translateY(-50%);z-index:150;width:36px;height:220px;background:rgba(8,14,30,0.88);border-radius:18px;border:1px solid rgba(255,255,255,0.2);flex-direction:column;align-items:center;padding:10px 0;gap:4px;box-shadow:0 2px 12px rgba(0,0,0,0.5);">
-  <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">+</span>
-  <div id="cam-zoom-track" style="flex:1;width:6px;background:rgba(255,255,255,0.12);border-radius:3px;position:relative;cursor:pointer;">
-    <div id="cam-zoom-handle" style="width:22px;height:22px;background:#41c1ff;border-radius:50%;position:absolute;left:50%;transform:translate(-50%,-50%);top:50%;cursor:grab;box-shadow:0 0 8px rgba(65,193,255,0.6);touch-action:none;"></div>
+<div id="cam-zoom-panel" style="display:none;position:fixed;left:10px;top:50%;transform:translateY(-50%);z-index:150;flex-direction:column;align-items:center;gap:6px;">
+  <!-- Circle toggle button (always visible during battle) -->
+  <div id="cam-zoom-btn" style="width:34px;height:34px;background:rgba(8,14,30,0.90);border-radius:50%;border:1px solid rgba(65,193,255,0.5);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 8px rgba(65,193,255,0.25);font-size:15px;user-select:none;">🔍</div>
+  <!-- Slider body (hidden until circle is tapped) -->
+  <div id="cam-zoom-body" style="display:none;flex-direction:column;align-items:center;padding:8px 0;gap:4px;width:36px;height:180px;background:rgba(8,14,30,0.90);border-radius:18px;border:1px solid rgba(65,193,255,0.3);box-shadow:0 2px 12px rgba(0,0,0,0.5);">
+    <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">+</span>
+    <div id="cam-zoom-track" style="flex:1;width:6px;background:rgba(255,255,255,0.12);border-radius:3px;position:relative;cursor:pointer;">
+      <div id="cam-zoom-handle" style="width:22px;height:22px;background:#41c1ff;border-radius:50%;position:absolute;left:50%;transform:translate(-50%,-50%);top:50%;cursor:grab;box-shadow:0 0 8px rgba(65,193,255,0.6);touch-action:none;"></div>
+    </div>
+    <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">-</span>
   </div>
-  <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">-</span>
 </div>
 `);
 
@@ -3909,10 +3914,11 @@ function showScreen(s: Screen) {
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
+  // 확대 슬라이더: 전투 중에만 원형 아이콘 표시
+  ($('cam-zoom-panel') as HTMLElement).style.display = s === 'battle' ? 'flex' : 'none';
   if (s !== 'battle') {
     camZoomSliderVisible = false;
-    ($('cam-zoom-panel') as HTMLElement).style.display = 'none';
-    ($('btn-cammode') as HTMLButtonElement | null)?.style && (($('btn-cammode') as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)');
+    ($('cam-zoom-body') as HTMLElement).style.display = 'none';
   }
   if (s !== 'battle' && s !== 'initial') sfx('click');
 
@@ -4320,12 +4326,21 @@ function playerUseFood(foodId: string) {
   updateHud();
 });
 
+// 시점 버튼: 측면 ↔ 위에서 아래로 시점 전환 (원래 동작 복구)
 $('btn-cammode').addEventListener('click', () => {
+  camMode = camMode === 'side' ? 'top' : 'side';
+  ($('btn-cammode') as HTMLButtonElement).textContent = camMode === 'top' ? '👁 측면' : '👁 시점';
+});
+
+// 🔍 원형 버튼: 슬라이더 펼치기/접기
+$('cam-zoom-btn').addEventListener('click', () => {
   camZoomSliderVisible = !camZoomSliderVisible;
-  const panel = $('cam-zoom-panel') as HTMLElement;
-  panel.style.display = camZoomSliderVisible ? 'flex' : 'none';
-  ($('btn-cammode') as HTMLButtonElement).style.background = camZoomSliderVisible
-    ? 'rgba(65,193,255,0.25)' : 'rgba(255,255,255,0.08)';
+  const body = $('cam-zoom-body') as HTMLElement;
+  body.style.display = camZoomSliderVisible ? 'flex' : 'none';
+  ($('cam-zoom-btn') as HTMLElement).style.borderColor = camZoomSliderVisible
+    ? '#41c1ff' : 'rgba(65,193,255,0.5)';
+  ($('cam-zoom-btn') as HTMLElement).style.boxShadow = camZoomSliderVisible
+    ? '0 0 12px rgba(65,193,255,0.6)' : '0 0 8px rgba(65,193,255,0.25)';
 });
 
 // Zoom slider drag logic
@@ -4429,8 +4444,8 @@ async function startBattle() {
   camPan = 0;
   camMode = 'side';
   camZoomSliderVisible = false;
-  ($('cam-zoom-panel') as HTMLElement).style.display = 'none';
-  ($('btn-cammode') as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)';
+  ($('cam-zoom-body') as HTMLElement).style.display = 'none';
+  ($('btn-cammode') as HTMLButtonElement).textContent = '👁 시점';
   round = 1;
   roundTimer = ROUND_DURATION;
   aiSpawnTimer = AI_ROUNDS[0].interval;
