@@ -147,7 +147,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   },
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
-    hp: 1000, atk: 40, spd: 0.1, atkCooldown: 10, range: 10,
+    hp: 1000, atk: 40, spd: 0.3, atkCooldown: 1, range: 10,
     modelScale: 0.0170, collisionSize: 3.0,
     aoe: 4,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
@@ -306,6 +306,42 @@ function spawnFloorFire(z: number) {
   mesh.position.set(0, 0.06, z);
   scene.add(mesh);
   floorFires.push({ mesh, mat, age: 0 });
+}
+
+function spawnDragonSuperEffect(z: number) {
+  // Massive fire explosion for dragon's 10th-hit super attack
+  const pos = new THREE.Vector3(0, 1, z);
+  for (let i = 0; i < 8; i++) {
+    setTimeout(() => {
+      if (!battleActive) return;
+      spawnParticles(pos, 0xff2200, 35, 14, 1.5);
+      spawnParticles(pos, 0xffcc00, 25, 10, 1.2);
+      spawnParticles(pos, 0xffffff, 10, 8, 0.8);
+    }, i * 60);
+  }
+  // Big floor fire patch
+  for (let offset = -3; offset <= 3; offset += 3) {
+    const geo = new THREE.PlaneGeometry(6, 6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(offset * 0.5, 0.08, z);
+    scene.add(mesh);
+    floorFires.push({ mesh, mat, age: 0 });
+  }
+  // Expanding shockwave rings
+  for (let i = 0; i < 3; i++) {
+    setTimeout(() => {
+      if (!battleActive) return;
+      const geo = new THREE.RingGeometry(0.1, 1.8, 64);
+      const mat = new THREE.MeshBasicMaterial({ color: [0xffffff, 0xff6600, 0xff2200][i], transparent: true, opacity: 1, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(0, 0.12 + i * 0.03, z);
+      scene.add(ring);
+      bossSpawnEffects.push({ ring, mat, age: 0 });
+    }, i * 80);
+  }
 }
 
 function updateFloorFires(dt: number) {
@@ -2819,6 +2855,29 @@ function canAttackEnemy(def: AnimalDef, enemyDef: AnimalDef): boolean {
 
 // AOE wrapper: hit primary target + all enemies within def.aoe radius
 function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allEnemies: UnitSim[], now: number) {
+  // Dragon dual attack: every 10th hit is a super attack
+  if (attacker.animalId === 'dragon') {
+    dragonAttackCount++;
+    const isSuperAttack = dragonAttackCount % 10 === 0;
+    const atkVal = isSuperAttack ? (attacker.appleBuffed ? def.atk * 2 : def.atk) : 5;
+    dealDamage(attacker, primary, atkVal, now);
+    if (def.aoe) {
+      for (const e of allEnemies) {
+        if (e !== primary && Math.abs(e.z - primary.z) <= def.aoe && e.state !== 'dead') {
+          dealDamage(attacker, e, atkVal, now);
+        }
+      }
+    }
+    if (isSuperAttack) {
+      spawnDragonSuperEffect(primary.z);
+    } else {
+      const hitPos = new THREE.Vector3(primary.x, 0.5, primary.z);
+      spawnParticles(hitPos, 0xff4400, 12, 5, 0.6);
+      spawnParticles(hitPos, 0xffaa00, 8, 3, 0.4);
+      spawnFloorFire(primary.z);
+    }
+    return;
+  }
   const atk = attacker.appleBuffed ? def.atk * 2 : def.atk;
   dealDamage(attacker, primary, atk, now);
   if (def.aoe) {
@@ -2827,13 +2886,6 @@ function dealDamageAOE(attacker: UnitSim, primary: UnitSim, def: AnimalDef, allE
         dealDamage(attacker, e, atk, now);
       }
     }
-  }
-  // Dragon fire breath visual
-  if (attacker.animalId === 'dragon') {
-    const hitPos = new THREE.Vector3(primary.x, 0.5, primary.z);
-    spawnParticles(hitPos, 0xff4400, 20, 6, 0.8);
-    spawnParticles(hitPos, 0xffaa00, 12, 4, 0.6);
-    spawnFloorFire(primary.z);
   }
 }
 
@@ -3206,6 +3258,7 @@ let dragonAlive = false;
 let dragonUnit: UnitSim | null = null;
 let dragonNextQuizHp = 900;      // trigger quiz at each 100hp lost
 let dragonPostKillTimer = -1;    // countdown to random boss after death
+let dragonAttackCount = 0;       // tracks hits; every 10th = super attack
 let dragonQuizActive = false;
 let dragonQuizPhase: 'memorize' | 'answer' = 'memorize';
 let dragonQuizWords: { english: string; korean: string; answers: string[] }[] = [];
@@ -3671,7 +3724,7 @@ document.body.insertAdjacentHTML('beforeend', `
   <div style="background:rgba(25,4,4,0.97);border:2px solid #ff4400;border-radius:16px;padding:24px 28px;max-width:460px;width:92%;text-align:center;box-shadow:0 0 40px rgba(255,68,0,0.5);">
     <div style="color:#ff6600;font-size:22px;font-weight:900;margin-bottom:4px;text-shadow:0 0 10px #ff4400;">드래곤 퀴즈!</div>
     <div id="dq-memorize" style="display:block;">
-      <div style="color:#aaa;font-size:13px;margin-bottom:12px;"><span id="dq-timer" style="color:#ffd700;font-weight:700;font-size:18px;">10</span>초 안에 암기하세요</div>
+      <div style="color:#aaa;font-size:13px;margin-bottom:12px;"><span id="dq-timer" style="color:#ffd700;font-weight:700;font-size:18px;">10</span>초 — 뜻 하나만 외우세요!</div>
       <div id="dq-words" style="display:flex;flex-direction:column;gap:8px;"></div>
     </div>
     <div id="dq-answer" style="display:none;">
@@ -4252,6 +4305,7 @@ function clearBattle() {
   dragonUnit = null;
   dragonNextQuizHp = 900;
   dragonPostKillTimer = -1;
+  dragonAttackCount = 0;
   dragonQuizActive = false;
   ($('dragon-quiz-overlay') as HTMLElement).style.display = 'none';
   ($('dragon-hp-bar') as HTMLElement).style.display = 'none';
@@ -5658,14 +5712,16 @@ function animate() {
       if (gameMode === '1p') addCurrency(1); // 2P: server handles auto-currency
     }
 
-    // Quiz event timer
-    quizEventTriggerTimer -= dt;
-    if (quizEventTriggerTimer <= 0) {
-      quizEventTriggerTimer = 60;
-      startQuizEvent();
+    // Quiz event timer (paused during dragon quiz)
+    if (!dragonQuizActive) {
+      quizEventTriggerTimer -= dt;
+      if (quizEventTriggerTimer <= 0) {
+        quizEventTriggerTimer = 60;
+        startQuizEvent();
+      }
     }
 
-    if (gameMode === '1p' && !quizEventActive) stepUnits(dt);
+    if (gameMode === '1p' && !quizEventActive && !dragonQuizActive) stepUnits(dt);
     // 2P: interpolate unit z toward server target for smooth movement
     if (gameMode === '2p') {
       const alpha = Math.min(1, dt * 20); // ~50ms to close gap
@@ -5685,10 +5741,10 @@ function animate() {
         u.mesh.rotation.y = Math.PI;
       }
     }
-    if (gameMode === '1p' && !quizEventActive) stepSiegeWeapons(dt);
-    if (gameMode === '1p') stepCannon(dt);
-    stepProjectiles(dt); // always run — damage=0 for 2P visual-only projectiles
-    if (gameMode === '1p') {
+    if (gameMode === '1p' && !quizEventActive && !dragonQuizActive) stepSiegeWeapons(dt);
+    if (gameMode === '1p' && !dragonQuizActive) stepCannon(dt);
+    if (!dragonQuizActive) stepProjectiles(dt);
+    if (gameMode === '1p' && !dragonQuizActive) {
       stepFoodProjectiles(dt);
       stepFoodZones(dt);
       stepFoodBuffs(dt);
@@ -5701,7 +5757,7 @@ function animate() {
       updateHud();
     }
 
-    if (gameMode === '1p') {
+    if (gameMode === '1p' && !dragonQuizActive) {
       checkWinLose();
       step1PAI(dt);
     }
