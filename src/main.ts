@@ -7,7 +7,7 @@ import { wordList } from './words';
 import { ANIMALS, ANIMAL_IDS, BASE_HP, BASE_HP_1P_ENEMY, FIELD_LEN, SPAWN_P1, SPAWN_P2, AIR_Y } from './animals';
 import type { AnimalDef } from './animals';
 import { FOODS, FOOD_IDS, isFoodId } from './foods';
-import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, ALL_ANIMALS, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard, redeemCode } from './supabase';
+import { supabase, toEmail, saveProfile, ensureProfile, DEFAULT_DECK, ALL_ANIMALS, submitLeaderboard, fetchLeaderboard, deleteMyLeaderboard, redeemCode, updateLeaderboardGold } from './supabase';
 import type { UserProfile, LeaderboardEntry } from './supabase';
 
 // ─── Model Loading ────────────────────────────────────────────────────────────
@@ -2268,14 +2268,14 @@ const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type GameMode = '1p' | '2p';
-type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'lobby2p' | 'battle' | 'result' | 'leaderboard';
+type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'gamble' | 'lobby2p' | 'battle' | 'result' | 'leaderboard';
 let loggedInUsername = '';
 let loggedInUserId = '';
 let isAdmin = false;
 let playerGold = 0;
 let guestNickname = localStorage.getItem('zoo_nickname') || '';
 let signupFrom: 'initial' | 'home' = 'initial'; // where signup was triggered from
-let lbTab: 'words' | 'clear' | 'wave' = 'words';
+let lbTab: 'words' | 'clear' | 'wave' | 'gold' = 'words';
 let lbRefreshInterval: ReturnType<typeof setInterval> | null = null;
 type Side = 'p1' | 'p2';
 type UnitState = 'moving' | 'attacking' | 'underground' | 'dead';
@@ -3353,6 +3353,69 @@ document.body.insertAdjacentHTML('beforeend', `
       </div>
     </div>
     <div id="shop-chest-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;width:100%;max-width:480px;"></div>
+    <div style="width:100%;max-width:480px;border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;margin-top:4px;">
+      <button id="btn-open-gamble" class="btn" style="width:100%;padding:14px;font-size:15px;font-weight:700;background:linear-gradient(135deg,rgba(255,180,0,0.15),rgba(255,80,0,0.15));border:1px solid rgba(255,160,0,0.4);color:#ffd060;">골드 불리기</button>
+    </div>
+  </div>
+</div>
+
+<!-- GAMBLE -->
+<div id="screen-gamble" class="screen hidden" style="justify-content:flex-start;overflow-y:auto;padding:0;background:rgba(8,10,20,0.98);">
+  <div style="width:100%;max-width:480px;padding:20px 16px 40px;display:flex;flex-direction:column;gap:16px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button id="btn-gamble-back" class="btn" style="padding:8px 14px;font-size:13px;">← 돌아가기</button>
+      <h2 style="margin:0;color:#ffd060;">골드 불리기</h2>
+      <span id="gamble-gold-display" style="margin-left:auto;color:#ffd060;font-weight:700;font-size:14px;"></span>
+    </div>
+
+    <!-- 확률 표시 -->
+    <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:16px;text-align:center;">
+      <div style="font-size:13px;color:#aaa;margin-bottom:6px;">현재 성공 확률</div>
+      <div id="gamble-rate-display" style="font-size:36px;font-weight:900;color:#4ade80;">1.0%</div>
+      <div id="gamble-rate-bar-wrap" style="height:8px;background:rgba(255,255,255,0.1);border-radius:99px;margin-top:10px;overflow:hidden;">
+        <div id="gamble-rate-bar" style="height:100%;width:1%;background:linear-gradient(90deg,#4ade80,#22d3ee);border-radius:99px;transition:width 0.4s;"></div>
+      </div>
+    </div>
+
+    <!-- 확률 늘리기 퀴즈 영역 -->
+    <div id="gamble-quiz-section" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+      <div style="font-size:14px;font-weight:700;color:#e8eefc;">확률 늘리기</div>
+      <!-- 암기 단계 -->
+      <div id="gamble-memorize" style="display:none;flex-direction:column;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:12px;color:#aaa;">10초 동안 암기하세요</span>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span id="gamble-mem-timer" style="font-size:13px;color:#ffd060;font-weight:700;"></span>
+            <button id="btn-gamble-skip" style="font-size:11px;color:rgba(255,255,255,0.4);background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:3px 8px;cursor:pointer;">건너뛰기</button>
+          </div>
+        </div>
+        <div id="gamble-word-cards" style="display:flex;flex-direction:column;gap:6px;"></div>
+        <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:99px;overflow:hidden;">
+          <div id="gamble-mem-bar" style="height:100%;width:100%;background:#ffd060;border-radius:99px;transition:width 0.1s linear;"></div>
+        </div>
+      </div>
+      <!-- 테스트 단계 -->
+      <div id="gamble-test" style="display:none;flex-direction:column;gap:10px;">
+        <div style="font-size:13px;color:#aaa;">뜻을 입력하세요</div>
+        <div id="gamble-test-word" style="font-size:22px;font-weight:900;color:#fff;text-align:center;padding:10px 0;"></div>
+        <input id="gamble-test-input" type="text" placeholder="한글 뜻 입력 후 Enter" style="padding:10px 14px;border-radius:8px;border:1px solid rgba(120,200,255,0.5);background:rgba(10,20,40,0.8);color:#fff;font-size:15px;outline:none;width:100%;">
+        <div id="gamble-test-result" style="min-height:20px;text-align:center;font-size:14px;font-weight:700;"></div>
+      </div>
+      <!-- 시작 버튼 -->
+      <button id="btn-gamble-quiz-start" class="btn" style="width:100%;padding:11px;font-size:14px;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:#4ade80;">단어 암기 시작 (+0.5% / -0.5%)</button>
+    </div>
+
+    <!-- 베팅 -->
+    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,160,0,0.2);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+      <div style="font-size:14px;font-weight:700;color:#ffd060;">베팅</div>
+      <div style="font-size:12px;color:#aaa;">성공 시 2배 획득 · 실패 시 전액 손실</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input id="gamble-bet-input" type="number" min="1" placeholder="베팅 골드" style="flex:1;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,160,0,0.4);background:rgba(10,20,40,0.8);color:#ffd060;font-size:15px;font-weight:700;outline:none;">
+        <button id="btn-gamble-allin" style="padding:10px 14px;border-radius:8px;border:1px solid rgba(255,160,0,0.5);background:rgba(255,160,0,0.12);color:#ffd060;font-size:13px;cursor:pointer;white-space:nowrap;">최대</button>
+      </div>
+      <button id="btn-gamble-roll" style="width:100%;padding:14px;border-radius:10px;font-size:16px;font-weight:900;cursor:pointer;border:none;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;letter-spacing:1px;">도전!</button>
+      <div id="gamble-roll-result" style="min-height:24px;text-align:center;font-size:15px;font-weight:700;"></div>
+    </div>
   </div>
 </div>
 
@@ -3433,10 +3496,11 @@ document.body.insertAdjacentHTML('beforeend', `
       <button class="btn" id="btn-lb-refresh" style="padding:8px 14px;font-size:13px;margin-left:auto;">새로고침</button>
     </div>
     <!-- Tab buttons -->
-    <div style="display:flex;gap:8px;margin-bottom:14px;">
-      <button id="lb-tab-words" class="btn primary" style="flex:1;padding:10px;font-size:14px;">단어 랭킹</button>
-      <button id="lb-tab-clear" class="btn" style="flex:1;padding:10px;font-size:14px;">클리어 랭킹</button>
-      <button id="lb-tab-wave" class="btn" style="flex:1;padding:10px;font-size:14px;">최대 웨이브</button>
+    <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+      <button id="lb-tab-words" class="btn primary" style="flex:1;padding:8px 4px;font-size:13px;">단어</button>
+      <button id="lb-tab-clear" class="btn" style="flex:1;padding:8px 4px;font-size:13px;">클리어</button>
+      <button id="lb-tab-wave" class="btn" style="flex:1;padding:8px 4px;font-size:13px;">웨이브</button>
+      <button id="lb-tab-gold" class="btn" style="flex:1;padding:8px 4px;font-size:13px;">골드</button>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
       <div id="lb-status" style="font-size:12px;color:#aaa;"></div>
@@ -3602,7 +3666,7 @@ function sfx(type: 'click'|'spawn'|'attack'|'death'|'base_hit'|'food_launch'|'fo
 
 function showScreen(s: Screen) {
   currentScreen = s;
-  const screens = ['initial','login','signup','loading','home','deck','shop','lobby2p','result','leaderboard'];
+  const screens = ['initial','login','signup','loading','home','deck','shop','gamble','lobby2p','result','leaderboard'];
   for (const id of screens) $(`screen-${id}`).classList.toggle('hidden', s !== id);
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
@@ -4165,7 +4229,7 @@ function fmtTime(sec: number): string {
 }
 
 // ─── Leaderboard ─────────────────────────────────────────────────────────────
-function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear' | 'wave') {
+function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear' | 'wave' | 'gold') {
   const list = $('lb-list');
   if (!entries.length) { list.innerHTML = '<div style="text-align:center;color:#aaa;padding:20px;">아직 기록이 없어요</div>'; ($('btn-lb-delete') as HTMLElement).style.display = 'none'; return; }
   const myNick = loggedInUsername || guestNickname;
@@ -4180,7 +4244,9 @@ function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear' |
       ? `${e.word_count}개 (정답률 ${accuracy}%)`
       : tab === 'clear'
       ? `${e.clear_count}회${e.best_time ? ` · 최단 ${fmtTime(e.best_time)}` : ''}${e.rounds_completed ? ` · ${e.rounds_completed}라운드` : ''}`
-      : `${e.rounds_completed ?? 0}라운드${e.best_wave_time ? ` · ${fmtTime(e.best_wave_time)}` : ''}`;
+      : tab === 'wave'
+      ? `${e.rounds_completed ?? 0}라운드${e.best_wave_time ? ` · ${fmtTime(e.best_wave_time)}` : ''}`
+      : `${(e.gold ?? 0).toLocaleString()} G`;
     const rankColor = rank === 1 ? '#ffd700' : rank === 2 ? '#c0c0c0' : rank === 3 ? '#cd7f32' : '#aaa';
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:${isMe ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.04)'};border:1px solid ${isMe ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.07)'};">
       <span style="min-width:34px;font-size:13px;font-weight:700;color:${rankColor};">${rankLabel}</span>
@@ -4190,20 +4256,19 @@ function renderLeaderboard(entries: LeaderboardEntry[], tab: 'words' | 'clear' |
   }).join('');
 }
 
-async function loadLeaderboard(tab: 'words' | 'clear' | 'wave') {
+async function loadLeaderboard(tab: 'words' | 'clear' | 'wave' | 'gold') {
   lbTab = tab;
-  // Update tab button styles
-  ($('lb-tab-words') as HTMLButtonElement).className = `btn ${tab === 'words' ? 'primary' : ''}`;
-  ($('lb-tab-words') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
-  ($('lb-tab-clear') as HTMLButtonElement).className = `btn ${tab === 'clear' ? 'primary' : ''}`;
-  ($('lb-tab-clear') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
-  ($('lb-tab-wave') as HTMLButtonElement).className = `btn ${tab === 'wave' ? 'primary' : ''}`;
-  ($('lb-tab-wave') as HTMLButtonElement).style.cssText = `flex:1;padding:10px;font-size:14px;`;
+  const tabs = ['words', 'clear', 'wave', 'gold'] as const;
+  const style = `flex:1;padding:8px 4px;font-size:13px;`;
+  for (const t of tabs) {
+    const el = $(`lb-tab-${t}`) as HTMLButtonElement;
+    if (el) { el.className = `btn ${tab === t ? 'primary' : ''}`; el.style.cssText = style; }
+  }
   $('lb-status').textContent = '불러오는 중...';
-  const sortBy = tab === 'words' ? 'word_count' : tab === 'clear' ? 'clear_count' : 'rounds_completed';
+  const sortBy = tab === 'words' ? 'word_count' : tab === 'clear' ? 'clear_count' : tab === 'wave' ? 'rounds_completed' : 'gold';
   const entries = await fetchLeaderboard(sortBy);
   renderLeaderboard(entries, tab);
-  $('lb-status').textContent = tab === 'wave'
+  $('lb-status').textContent = (tab === 'wave' || tab === 'gold')
     ? `최근 갱신: ${new Date().toLocaleTimeString('ko-KR')} · 상위 10명`
     : `최근 갱신: ${new Date().toLocaleTimeString('ko-KR')} · 상위 100명`;
 }
@@ -4383,7 +4448,7 @@ function endBattle(result: 'win' | 'lose' | 'draw') {
     const nick = loggedInUsername || guestNickname;
     if (nick) {
       const totalAttempted = correctWords.length + wrongWords;
-      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null, wrongWords, totalAttempted, round, battleClock);
+      submitLeaderboard(nick, correctWords.length, result === 'win', result === 'win' ? battleClock : null, wrongWords, totalAttempted, round, battleClock, playerGold);
     }
 
     const row = (label: string, val: string) =>
@@ -5007,6 +5072,7 @@ $('btn-lb-refresh').addEventListener('click', () => loadLeaderboard(lbTab));
 $('lb-tab-words').addEventListener('click', () => loadLeaderboard('words'));
 $('lb-tab-clear').addEventListener('click', () => loadLeaderboard('clear'));
 $('lb-tab-wave').addEventListener('click', () => loadLeaderboard('wave'));
+$('lb-tab-gold').addEventListener('click', () => loadLeaderboard('gold'));
 $('btn-lb-delete').addEventListener('click', async () => {
   const nick = loggedInUsername || guestNickname;
   if (!nick) return;
@@ -5125,6 +5191,142 @@ $('btn-redeem').addEventListener('click', async () => {
 $('btn-deck-back').addEventListener('click', () => showScreen('home'));
 $('btn-shop-back').addEventListener('click', () => showScreen('home'));
 $('btn-home-shop').addEventListener('click', () => { buildShopChests(); showScreen('shop'); });
+
+// ─── Gold Gamble ──────────────────────────────────────────────────────────────
+let gambleSuccessRate = 1.0; // %
+let gambleQuizWords: typeof wordList = [];
+let gambleQuizTestWord: typeof wordList[0] | null = null;
+let gambleMemTimer: ReturnType<typeof setInterval> | null = null;
+let gambleMemSeconds = 10;
+
+function updateGambleDisplay() {
+  const rate = Math.min(99, Math.max(0.5, gambleSuccessRate));
+  ($('gamble-rate-display') as HTMLElement).textContent = rate.toFixed(1) + '%';
+  ($('gamble-rate-bar') as HTMLElement).style.width = rate + '%';
+  ($('gamble-gold-display') as HTMLElement).textContent = playerGold.toLocaleString() + ' G';
+}
+
+function gambleQuizStart() {
+  const idxs = new Set<number>();
+  while (idxs.size < 3) idxs.add(Math.floor(Math.random() * wordList.length));
+  gambleQuizWords = [...idxs].map(i => wordList[i]);
+
+  // Build word cards
+  const cards = $('gamble-word-cards');
+  cards.innerHTML = gambleQuizWords.map(w =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(255,255,255,0.05);border-radius:10px;border:1px solid rgba(255,255,255,0.1);">
+      <span style="font-size:15px;font-weight:700;color:#fff;">${w.english}</span>
+      <span style="font-size:13px;color:#a0ffb8;">${w.korean.split(',')[0].trim()}</span>
+    </div>`
+  ).join('');
+
+  $('btn-gamble-quiz-start').style.display = 'none';
+  ($('gamble-memorize') as HTMLElement).style.display = 'flex';
+  ($('gamble-test') as HTMLElement).style.display = 'none';
+  ($('gamble-test-result') as HTMLElement).textContent = '';
+
+  gambleMemSeconds = 10;
+  ($('gamble-mem-timer') as HTMLElement).textContent = gambleMemSeconds + 's';
+  ($('gamble-mem-bar') as HTMLElement).style.transition = 'none';
+  ($('gamble-mem-bar') as HTMLElement).style.width = '100%';
+  setTimeout(() => { ($('gamble-mem-bar') as HTMLElement).style.transition = `width ${gambleMemSeconds}s linear`; ($('gamble-mem-bar') as HTMLElement).style.width = '0%'; }, 50);
+
+  if (gambleMemTimer) clearInterval(gambleMemTimer);
+  gambleMemTimer = setInterval(() => {
+    gambleMemSeconds--;
+    const el = $('gamble-mem-timer');
+    if (el) el.textContent = gambleMemSeconds + 's';
+    if (gambleMemSeconds <= 0) gambleQuizShowTest();
+  }, 1000);
+}
+
+function gambleQuizShowTest() {
+  if (gambleMemTimer) { clearInterval(gambleMemTimer); gambleMemTimer = null; }
+  gambleQuizTestWord = gambleQuizWords[Math.floor(Math.random() * gambleQuizWords.length)];
+  ($('gamble-memorize') as HTMLElement).style.display = 'none';
+  ($('gamble-test') as HTMLElement).style.display = 'flex';
+  ($('gamble-test-word') as HTMLElement).textContent = gambleQuizTestWord.english;
+  ($('gamble-test-input') as HTMLInputElement).value = '';
+  ($('gamble-test-input') as HTMLInputElement).focus();
+  ($('gamble-test-result') as HTMLElement).textContent = '';
+}
+
+function gambleQuizSubmit() {
+  if (!gambleQuizTestWord) return;
+  const typed = (($('gamble-test-input') as HTMLInputElement).value || '').trim().replace(/\s/g, '');
+  const correct = gambleQuizTestWord.answers.some(a => a.trim().replace(/\s/g, '') === typed);
+  const resultEl = $('gamble-test-result');
+  if (correct) {
+    gambleSuccessRate = Math.min(99, gambleSuccessRate + 0.5);
+    resultEl.textContent = '정답! +0.5%';
+    resultEl.style.color = '#4ade80';
+  } else {
+    gambleSuccessRate = Math.max(0.5, gambleSuccessRate - 0.5);
+    resultEl.textContent = `오답 (-0.5%) 정답: ${gambleQuizTestWord.answers[0]}`;
+    resultEl.style.color = '#f87171';
+  }
+  updateGambleDisplay();
+  // Reset for next round
+  setTimeout(() => {
+    ($('gamble-test') as HTMLElement).style.display = 'none';
+    ($('btn-gamble-quiz-start') as HTMLElement).style.display = 'block';
+  }, 1200);
+}
+
+$('btn-open-gamble').addEventListener('click', () => {
+  gambleSuccessRate = 1.0;
+  if (gambleMemTimer) { clearInterval(gambleMemTimer); gambleMemTimer = null; }
+  ($('gamble-memorize') as HTMLElement).style.display = 'none';
+  ($('gamble-test') as HTMLElement).style.display = 'none';
+  ($('btn-gamble-quiz-start') as HTMLElement).style.display = 'block';
+  ($('gamble-test-result') as HTMLElement).textContent = '';
+  ($('gamble-roll-result') as HTMLElement).textContent = '';
+  ($('gamble-bet-input') as HTMLInputElement).value = '';
+  updateGambleDisplay();
+  showScreen('gamble');
+});
+
+$('btn-gamble-back').addEventListener('click', () => {
+  if (gambleMemTimer) { clearInterval(gambleMemTimer); gambleMemTimer = null; }
+  showScreen('shop');
+});
+
+$('btn-gamble-quiz-start').addEventListener('click', () => gambleQuizStart());
+$('btn-gamble-skip').addEventListener('click', () => gambleQuizShowTest());
+
+$('gamble-test-input').addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key === 'Enter') gambleQuizSubmit();
+});
+
+$('btn-gamble-allin').addEventListener('click', () => {
+  ($('gamble-bet-input') as HTMLInputElement).value = String(playerGold);
+});
+
+$('btn-gamble-roll').addEventListener('click', () => {
+  const bet = parseInt(($('gamble-bet-input') as HTMLInputElement).value || '0');
+  const resultEl = $('gamble-roll-result');
+  if (!bet || bet <= 0) { resultEl.textContent = '베팅 금액을 입력하세요.'; resultEl.style.color = '#aaa'; return; }
+  if (bet > playerGold) { resultEl.textContent = '골드가 부족합니다.'; resultEl.style.color = '#f87171'; return; }
+
+  const roll = Math.random() * 100;
+  const success = roll < gambleSuccessRate;
+
+  if (success) {
+    playerGold += bet; // win = get bet back + bet = 2x
+    resultEl.textContent = `성공! +${bet.toLocaleString()} G (${gambleSuccessRate.toFixed(1)}% 확률)`;
+    resultEl.style.color = '#4ade80';
+  } else {
+    playerGold -= bet;
+    resultEl.textContent = `실패... -${bet.toLocaleString()} G`;
+    resultEl.style.color = '#f87171';
+  }
+  ($('gamble-bet-input') as HTMLInputElement).value = '';
+  updateGambleDisplay();
+  updateHomeDisplay();
+  const nick = loggedInUsername || guestNickname;
+  if (nick) updateLeaderboardGold(nick, playerGold);
+  if (loggedInUserId) saveProfile(loggedInUserId, { gold: playerGold, deck: playerDeck, owned_animals: [...playerOwnedAnimals] });
+});
 
 // Lobby
 $('btn-lobby-back').addEventListener('click', () => {

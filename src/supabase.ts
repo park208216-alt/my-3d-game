@@ -76,6 +76,7 @@ export interface LeaderboardEntry {
   total_words: number;
   rounds_completed: number;
   best_wave_time: number | null;
+  gold: number;
 }
 
 // IMPORTANT: Run this SQL in Supabase Dashboard > SQL Editor before using these fields:
@@ -83,6 +84,15 @@ export interface LeaderboardEntry {
 // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS total_words INTEGER DEFAULT 0;
 // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS rounds_completed INTEGER DEFAULT 0;
 // ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS best_wave_time FLOAT;
+// ALTER TABLE leaderboard ADD COLUMN IF NOT EXISTS gold INTEGER DEFAULT 0;
+
+export async function updateLeaderboardGold(nickname: string, gold: number): Promise<void> {
+  if (!nickname) return;
+  const { error } = await supabase.from('leaderboard')
+    .update({ gold })
+    .eq('nickname', nickname);
+  if (error) console.error('[Leaderboard] gold 업데이트 실패:', error.message);
+}
 
 export async function submitLeaderboard(
   nickname: string,
@@ -92,7 +102,8 @@ export async function submitLeaderboard(
   wrongCount: number = 0,
   totalWords: number = 0,
   roundsCompleted: number = 0,
-  bestWaveTimeSec: number | null = null
+  bestWaveTimeSec: number | null = null,
+  gold: number = 0
 ): Promise<void> {
   const deviceToken = getDeviceToken();
 
@@ -140,6 +151,7 @@ export async function submitLeaderboard(
     total_words: newTotalWords,
     rounds_completed: newRoundsCompleted,
     best_wave_time: newBestWaveTime,
+    gold,
     updated_at: new Date().toISOString(),
   });
   if (error) console.error('[Leaderboard] 저장 실패:', error.message, error.details);
@@ -160,7 +172,7 @@ export async function deleteMyLeaderboard(nickname: string): Promise<boolean> {
 }
 
 export async function fetchLeaderboard(
-  sortBy: 'word_count' | 'clear_count' | 'rounds_completed'
+  sortBy: 'word_count' | 'clear_count' | 'rounds_completed' | 'gold'
 ): Promise<LeaderboardEntry[]> {
   let query = supabase.from('leaderboard').select('*');
   if (sortBy === 'rounds_completed') {
@@ -173,6 +185,11 @@ export async function fetchLeaderboard(
       .not('clear_count', 'eq', 0)
       .order('clear_count', { ascending: false })
       .limit(100);
+  } else if (sortBy === 'gold') {
+    query = query
+      .gt('gold', 0)
+      .order('gold', { ascending: false })
+      .limit(10);
   } else {
     query = query
       .order(sortBy, { ascending: false })
