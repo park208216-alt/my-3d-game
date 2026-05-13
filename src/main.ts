@@ -3825,7 +3825,7 @@ document.body.insertAdjacentHTML('beforeend', `
 
 // ─── Camera Zoom Slider ───────────────────────────────────────────────────────
 document.body.insertAdjacentHTML('beforeend', `
-<div id="cam-zoom-panel" style="display:none;position:fixed;right:10px;top:50%;transform:translateY(-50%);z-index:150;width:36px;height:220px;background:rgba(8,14,30,0.88);border-radius:18px;border:1px solid rgba(255,255,255,0.2);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;box-shadow:0 2px 12px rgba(0,0,0,0.5);">
+<div id="cam-zoom-panel" style="display:none;position:fixed;left:10px;top:50%;transform:translateY(-50%);z-index:150;width:36px;height:220px;background:rgba(8,14,30,0.88);border-radius:18px;border:1px solid rgba(255,255,255,0.2);flex-direction:column;align-items:center;padding:10px 0;gap:4px;box-shadow:0 2px 12px rgba(0,0,0,0.5);">
   <span style="color:#41c1ff;font-size:13px;font-weight:900;line-height:1;">+</span>
   <div id="cam-zoom-track" style="flex:1;width:6px;background:rgba(255,255,255,0.12);border-radius:3px;position:relative;cursor:pointer;">
     <div id="cam-zoom-handle" style="width:22px;height:22px;background:#41c1ff;border-radius:50%;position:absolute;left:50%;transform:translate(-50%,-50%);top:50%;cursor:grab;box-shadow:0 0 8px rgba(65,193,255,0.6);touch-action:none;"></div>
@@ -3909,6 +3909,11 @@ function showScreen(s: Screen) {
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
   renderer.domElement.style.display = s === 'battle' ? 'block' : 'none';
+  if (s !== 'battle') {
+    camZoomSliderVisible = false;
+    ($('cam-zoom-panel') as HTMLElement).style.display = 'none';
+    ($('btn-cammode') as HTMLButtonElement | null)?.style && (($('btn-cammode') as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)');
+  }
   if (s !== 'battle' && s !== 'initial') sfx('click');
 
   // BGM: 홈/로비엔 bgm, 전투 중엔 battleBgm
