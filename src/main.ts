@@ -147,7 +147,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   },
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
-    hp: 1000, atk: 40, spd: 1, atkCooldown: 1, range: 10,
+    hp: 1000, atk: 40, spd: 0.1, atkCooldown: 10, range: 10,
     modelScale: 0.0170, collisionSize: 3.0,
     aoe: 4,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
@@ -4603,6 +4603,11 @@ function checkWinLose() {
 
 function endBattle(result: 'win' | 'lose' | 'draw') {
   battleActive = false;
+  // Close dragon quiz overlay if open
+  if (dragonQuizActive) {
+    dragonQuizActive = false;
+    ($('dragon-quiz-overlay') as HTMLElement).style.display = 'none';
+  }
   if (result === 'win') sfx('victory');
   else if (result === 'lose') sfx('defeat');
   const B = import.meta.env.BASE_URL;
