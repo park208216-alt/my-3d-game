@@ -2268,7 +2268,7 @@ const AI_ROUNDS: Array<{ interval: number; pool: string[] }> = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type GameMode = '1p' | '2p';
-type Screen = 'initial' | 'login' | 'signup' | 'loading' | 'home' | 'deck' | 'shop' | 'gamble' | 'lobby2p' | 'battle' | 'result' | 'leaderboard';
+type Screen = 'initial' | 'login' | 'signup' | 'save-choice' | 'loading' | 'home' | 'deck' | 'shop' | 'gamble' | 'lobby2p' | 'battle' | 'result' | 'leaderboard';
 let loggedInUsername = '';
 let loggedInUserId = '';
 let isAdmin = false;
@@ -3284,6 +3284,37 @@ document.body.insertAdjacentHTML('beforeend', `
   </div>
 </div>
 
+<!-- SAVE CHOICE -->
+<div id="screen-save-choice" class="screen hidden">
+  <div class="jui-panel" style="gap:14px;">
+    <h2 style="text-align:center;margin-bottom:2px;">진행상황 저장</h2>
+    <div style="background:rgba(65,193,255,0.1);border:1px solid rgba(65,193,255,0.3);border-radius:10px;padding:10px 14px;font-size:13px;color:#a8e6ff;text-align:center;line-height:1.6;">
+      현재 게스트 닉네임: <strong id="save-choice-nick" style="color:#fff;"></strong><br>
+      <span style="font-size:12px;opacity:0.75;">골드·덱·보유 캐릭터가 저장됩니다</span>
+    </div>
+
+    <!-- 옵션 1: 로그인 -->
+    <button id="btn-save-choice-login" class="btn full-btn" style="padding:14px;font-size:15px;font-weight:700;background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.35);color:#4ade80;">
+      기존 계정으로 로그인
+    </button>
+
+    <!-- 옵션 2: 비밀번호만 입력해서 계정 생성 -->
+    <div style="width:100%;display:flex;flex-direction:column;gap:8px;">
+      <button id="btn-save-choice-create" class="btn full-btn" style="padding:14px;font-size:15px;font-weight:700;background:rgba(96,160,255,0.12);border:1px solid rgba(96,160,255,0.35);color:#60a0ff;">
+        현재 닉네임으로 계정 생성
+      </button>
+      <div id="save-choice-pw-form" style="display:none;flex-direction:column;gap:8px;">
+        <input class="field" id="in-save-pw1" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password">
+        <input class="field" id="in-save-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
+        <div id="save-choice-error" style="color:#ff9090;font-size:13px;min-height:18px;text-align:center;"></div>
+        <button class="btn primary full-btn" id="btn-save-choice-confirm">계정 생성 및 저장</button>
+      </div>
+    </div>
+
+    <button id="btn-save-choice-back" class="btn full-btn" style="opacity:0.6;font-size:13px;padding:10px;">← 돌아가기</button>
+  </div>
+</div>
+
 <!-- SIGNUP -->
 <div id="screen-signup" class="screen hidden">
   <div class="jui-panel">
@@ -3667,7 +3698,7 @@ function sfx(type: 'click'|'spawn'|'attack'|'death'|'base_hit'|'food_launch'|'fo
 
 function showScreen(s: Screen) {
   currentScreen = s;
-  const screens = ['initial','login','signup','loading','home','deck','shop','gamble','lobby2p','result','leaderboard'];
+  const screens = ['initial','login','signup','save-choice','loading','home','deck','shop','gamble','lobby2p','result','leaderboard'];
   for (const id of screens) $(`screen-${id}`).classList.toggle('hidden', s !== id);
   $('panel-battle').style.display = s === 'battle' ? 'block' : 'none';
   $('top-hud').style.display = s === 'battle' ? 'block' : 'none';
@@ -5119,11 +5150,14 @@ $('btn-home-deck').addEventListener('click', () => {
 });
 $('btn-home-save').addEventListener('click', async () => {
   if (!loggedInUserId) {
-    // 게스트 → 아이디 생성 화면으로 이동해서 가입 후 저장
+    // 게스트 → 선택 화면으로
     signupFrom = 'home';
-    $('signup-error').textContent = '';
-    ($('signup-hint') as HTMLElement).style.display = 'block';
-    showScreen('signup');
+    ($('save-choice-nick') as HTMLElement).textContent = guestNickname || '(닉네임 없음)';
+    ($('save-choice-pw-form') as HTMLElement).style.display = 'none';
+    $('save-choice-error').textContent = '';
+    ($('in-save-pw1') as HTMLInputElement).value = '';
+    ($('in-save-pw2') as HTMLInputElement).value = '';
+    showScreen('save-choice');
     return;
   }
   const btn = $('btn-home-save') as HTMLButtonElement;
@@ -5571,6 +5605,52 @@ $('btn-signup-go-login').addEventListener('click', () => {
   $('login-error').textContent = '';
   showScreen('login');
 });
+
+// ─── Save Choice Screen ───────────────────────────────────────────────────────
+$('btn-save-choice-back').addEventListener('click', () => {
+  signupFrom = 'initial';
+  showScreen('home');
+});
+
+$('btn-save-choice-login').addEventListener('click', () => {
+  // signupFrom='home' 유지 → 로그인 후 게스트 진행상황 저장
+  $('login-error').textContent = '';
+  showScreen('login');
+});
+
+$('btn-save-choice-create').addEventListener('click', () => {
+  const form = $('save-choice-pw-form') as HTMLElement;
+  form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+  if (form.style.display === 'flex') ($('in-save-pw1') as HTMLInputElement).focus();
+});
+
+async function handleSaveChoiceConfirm() {
+  const pw1 = ($('in-save-pw1') as HTMLInputElement).value;
+  const pw2 = ($('in-save-pw2') as HTMLInputElement).value;
+  const errEl = $('save-choice-error');
+  const id = guestNickname.trim();
+  if (!id) { errEl.textContent = '닉네임이 없습니다. 홈에서 닉네임을 설정하세요.'; return; }
+  if (!pw1) { errEl.textContent = '비밀번호를 입력하세요.'; return; }
+  if (pw1.length < 6) { errEl.textContent = '비밀번호는 6자 이상이어야 합니다.'; return; }
+  if (pw1 !== pw2) { errEl.textContent = '비밀번호가 일치하지 않습니다.'; return; }
+  errEl.textContent = '';
+  ($('btn-save-choice-confirm') as HTMLButtonElement).disabled = true;
+  const { data, error } = await supabase.auth.signUp({ email: toEmail(id), password: pw1 });
+  ($('btn-save-choice-confirm') as HTMLButtonElement).disabled = false;
+  if (error) {
+    errEl.textContent = error.message.includes('already') ? '이미 사용 중인 아이디입니다.' : error.message;
+    return;
+  }
+  if (!data.user) { errEl.textContent = '생성 실패. 다시 시도하세요.'; return; }
+  showScreen('loading');
+  const profile = { gold: playerGold, deck: [...playerDeck], owned_animals: [...playerOwnedAnimals] };
+  await supabase.from('profiles').upsert({ id: data.user.id, ...profile });
+  signupFrom = 'initial';
+  await applyProfile(id, data.user.id, profile);
+}
+
+$('btn-save-choice-confirm').addEventListener('click', handleSaveChoiceConfirm);
+($('in-save-pw2') as HTMLInputElement).addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSaveChoiceConfirm(); });
 $('btn-signup-back').addEventListener('click', () => {
   ($('signup-hint') as HTMLElement).style.display = 'none';
   const from = signupFrom;
