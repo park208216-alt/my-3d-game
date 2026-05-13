@@ -148,7 +148,7 @@ const BOSS_DEFS: Record<string, BossDef> = {
   dragon: {
     id: 'dragon', name: '드레곤', file: 'Dragon.fbx',
     hp: 1000, atk: 40, spd: 0.3, atkCooldown: 1, range: 10,
-    modelScale: 0.0085, collisionSize: 3.0,
+    modelScale: 0.0170, collisionSize: 3.0,
     aoe: 4,
     animWalk: 'Dragon_Flying', animAtk: 'Dragon_Attack',
   },
