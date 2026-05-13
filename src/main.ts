@@ -3294,6 +3294,7 @@ document.body.insertAdjacentHTML('beforeend', `
     <input class="field" id="in-signup-pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">
     <div id="signup-error" style="color:#ff9090;font-size:13px;min-height:18px;text-align:center;"></div>
     <button class="btn primary full-btn" id="btn-signup-confirm">아이디 생성</button>
+    <button class="btn full-btn" id="btn-signup-go-login" style="font-size:13px;padding:10px;opacity:0.85;">이미 아이디가 있으신가요? 로그인</button>
     <button class="btn full-btn" id="btn-signup-back" style="opacity:0.65;font-size:13px;padding:10px;">← 돌아가기</button>
   </div>
 </div>
@@ -5512,8 +5513,16 @@ async function handleLogin() {
   ($('btn-login') as HTMLButtonElement).disabled = false;
   if (signInResult.error || !signInResult.data.user) { errEl.textContent = '아이디 또는 비밀번호가 틀렸습니다'; return; }
   showScreen('loading');
-  const profile = await ensureProfile(signInResult.data.user.id);
-  await applyProfile(id, signInResult.data.user.id, profile);
+  if (signupFrom === 'home') {
+    // 게스트 진행상황을 로그인한 계정에 저장 (덮어쓰기)
+    const guestProfile = { gold: playerGold, deck: [...playerDeck], owned_animals: [...playerOwnedAnimals] };
+    await supabase.from('profiles').upsert({ id: signInResult.data.user.id, ...guestProfile });
+    signupFrom = 'initial';
+    await applyProfile(id, signInResult.data.user.id, guestProfile);
+  } else {
+    const profile = await ensureProfile(signInResult.data.user.id);
+    await applyProfile(id, signInResult.data.user.id, profile);
+  }
 }
 
 async function handleSignupConfirm() {
@@ -5557,6 +5566,11 @@ $('btn-login-back').addEventListener('click', () => showScreen('initial'));
 
 $('btn-signup-confirm').addEventListener('click', handleSignupConfirm);
 ($('in-signup-pw2') as HTMLInputElement).addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSignupConfirm(); });
+$('btn-signup-go-login').addEventListener('click', () => {
+  // signupFrom 유지한 채로 로그인 화면으로 이동 (게스트 진행상황 보존)
+  $('login-error').textContent = '';
+  showScreen('login');
+});
 $('btn-signup-back').addEventListener('click', () => {
   ($('signup-hint') as HTMLElement).style.display = 'none';
   const from = signupFrom;
